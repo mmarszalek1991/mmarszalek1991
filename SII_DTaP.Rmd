@@ -1,0 +1,612 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+
+#Import file into R
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+dtap_compass <- s3read_using(FUN = read.csv, object = "***")
+
+
+LSOA_lookup <- read.csv("***.csv")
+MSOA_lookup <- read.csv("***.csv")
+
+LSOA_IMD_tercile <- read_dta("***.dta")
+
+```
+
+
+
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+library(haven)
+library(PHEindicatormethods)
+```
+
+
+```{r}
+#remove City practices
+#Rename column in file to then remove City practices
+dtap_compass <- dtap_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+dtap_compass <- dtap_compass[which(dtap_compass$Lsoa_2011_code %!in% City_lsoa), ]
+
+#Remove invalid LSOA codes
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+dtap_compass <- dtap_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+dtap_compass <- dtap_compass[!grepl('W', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('S', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('U', dtap_compass$Lsoa_2011_code),]
+
+```
+
+
+```{r}
+
+
+#clean data
+#convert character columns to workable dates 
+
+dtap_compass$Clinical_effective_date <- as.Date(dtap_compass$Clinical_effective_date, format = "%d/%m/%Y")
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end, format = "%d/%m/%Y")
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start, format = "%d/%m/%Y")
+dtap_compass$run_date <- as.Date(dtap_compass$run_date, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations
+#Remove registrations with older start dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end)
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start)
+
+dtap_compass$Date_registered_end <- if_else(is.na(dtap_compass$Date_registered_end), as.Date("2050-01-01"), dtap_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(dtap_compass$Person_id))
+summary(dtap_compass)
+
+
+
+```
+
+```{r}
+LSOA_IMD_tercile <- LSOA_IMD_tercile %>%
+  rename(Lsoa_2011_code = lsoa2011)
+
+IMD_only <- LSOA_IMD_tercile[, c('Lsoa_2011_code','imddecile','imd2015score')]
+
+dtap_compass <- merge(dtap_compass, IMD_only, by = "Lsoa_2011_code", all.x = T)
+
+length(unique(dtap_compass$Person_id))
+
+dtap_compass <- dtap_compass[!duplicated(dtap_compass[c("Person_id")]), ]
+```
+
+
+
+```{r}
+#Create quintiles from deciles data
+
+dtap_compass$imdquintile <- if_else(dtap_compass$imddecile == 1 & dtap_compass$imddecile ==2, '1', 'NA')
+
+dtap_compass$imdquintile[dtap_compass$imddecile == 1] <- 1
+dtap_compass$imdquintile[dtap_compass$imddecile == 2] <- 1
+dtap_compass$imdquintile[dtap_compass$imddecile == 3] <- 2
+dtap_compass$imdquintile[dtap_compass$imddecile == 4] <- 2
+dtap_compass$imdquintile[dtap_compass$imddecile == 5] <- 3
+dtap_compass$imdquintile[dtap_compass$imddecile == 6] <- 3
+dtap_compass$imdquintile[dtap_compass$imddecile == 7] <- 4
+dtap_compass$imdquintile[dtap_compass$imddecile == 8] <- 4
+dtap_compass$imdquintile[dtap_compass$imddecile == 9] <- 5
+dtap_compass$imdquintile[dtap_compass$imddecile == 10] <- 5
+```
+
+
+
+```{r}
+
+#Remove any rows without IMD scores
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(imd2015score))
+
+#Separate out numerator and denominator to calculate rate later
+
+dtap_compass <- select(dtap_compass, -c(Age_at_event))
+
+dtap_compass <- dtap_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+dtap_compass_1 <- dtap_compass %>%
+  filter(Age_at_event >= 0.12)
+
+dtap_compass_2 <- dtap_compass %>%
+  filter(Codeterm == "")
+
+dtap_compass <- rbind(dtap_compass_1, dtap_compass_2)
+
+dtap_compass_denom <- dtap_compass %>%
+  filter(Codeterm == "")
+
+dtap_compass <- dtap_compass %>%
+  filter(Codeterm != "")
+```
+
+```{r}
+#create separate data tables to be able to calculate rates pre and post implementation
+Pre_APL <- dtap_compass %>%
+  filter(run_date < '2022-03-01')
+
+Pre_APL_denom <- dtap_compass_denom %>%
+  filter(run_date < '2022-03-01')
+
+Post_APL <- dtap_compass %>%
+  filter(run_date > '2022-03-01')
+
+Post_APL_denom <- dtap_compass_denom %>%
+  filter(run_date > '2022-03-01')
+
+
+
+```
+
+```{r}
+
+#Need to calculate weighted rate of dtap coverage per Quintile:pre, then post, then combine.
+
+pre_datadtap_SII <- table(Pre_APL$imdquintile)
+pre_datadtap_SII <- as.data.frame(pre_datadtap_SII)
+
+#rename column name to run_date
+pre_datadtap_SII <- pre_datadtap_SII %>%
+  rename(imdquintile = Var1)
+
+pre_datadtap_SII <- pre_datadtap_SII %>%
+  rename(Num = Freq)
+
+datadtapdenom_SII <- table(Pre_APL_denom$imdquintile)
+
+datadtapdenom_SII <- as.data.frame(datadtapdenom_SII)
+
+#rename column name to run_date
+datadtapdenom_SII <- datadtapdenom_SII %>%
+  rename(imdquintile = Var1)
+
+pre_datadtap_SII <- merge(pre_datadtap_SII, datadtapdenom_SII, by = "imdquintile")
+
+pre_datadtap_SII$Denom <- with(pre_datadtap_SII, Num + Freq)
+
+pre_datadtap_SII <- select(pre_datadtap_SII, -c(Freq))
+pre_datadtap_SII$rate <- with(pre_datadtap_SII, Num/Denom*100)
+
+pre_datadtap_SII$Int <- "pre"
+
+
+fwrite(pre_datadtap_SII, "//Users/milenamarszalek/Documents/Documents\ -\ Milena’s\ MacBook\\pre_datadtap_SII.csv")
+
+```
+
+
+```{r}
+#calculate separate standard errors for the values, which are required to calculate SII 
+
+Pre_APL_All <- rbind(Pre_APL, Pre_APL_denom)
+
+Pre_APL_All$Outcome <- "1"
+Pre_APL_All$Outcome <- as.numeric(Pre_APL_All$Outcome)
+
+Pre_APL_All[Pre_APL_All == ""] <- NA
+
+Pre_APL_All$Outcome <- if_else(is.na(Pre_APL_All$Codeterm), 0, Pre_APL_All$Outcome)
+```
+
+
+```{r}
+#Each quintile becomes a separate data table so that separate standard errors can be calculated
+Pre_APL_Quint1 <- Pre_APL_All %>%
+  filter(imdquintile == 1)
+
+
+Pre_APL_Quint2 <- Pre_APL_All %>%
+  filter(imdquintile == 2)
+
+
+Pre_APL_Quint3 <- Pre_APL_All %>%
+  filter(imdquintile == 3)
+
+
+Pre_APL_Quint4 <- Pre_APL_All %>%
+  filter(imdquintile == 4)
+
+
+Pre_APL_Quint5 <- Pre_APL_All %>%
+  filter(imdquintile == 5)
+
+```
+
+
+```{r}
+#Quint 1
+mean_Quint_1 <- mean(Pre_APL_Quint1$Outcome == 1)
+sd_1 <- sd(Pre_APL_Quint1$Outcome == 1)
+sample.n <- length(Pre_APL_Quint1$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_1 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_1_lower.bound <- mean_Quint_1 - margin.error
+Quint_1_upper.bound <- mean_Quint_1 + margin.error
+```
+
+
+```{r}
+#Quint 2
+mean_Quint_2 <- mean(Pre_APL_Quint2$Outcome == 1)
+sd_1 <- sd(Pre_APL_Quint2$Outcome == 1)
+sample.n <- length(Pre_APL_Quint2$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_2 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_2_lower.bound <- mean_Quint_2 - margin.error
+Quint_2_upper.bound <- mean_Quint_2 + margin.error
+```
+
+
+```{r}
+#Quint 3
+mean_Quint_3 <- mean(Pre_APL_Quint3$Outcome == 1)
+sd_1 <- sd(Pre_APL_Quint3$Outcome == 1)
+sample.n <- length(Pre_APL_Quint3$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_3 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_3_lower.bound <- mean_Quint_3 - margin.error
+Quint_3_upper.bound <- mean_Quint_3 + margin.error
+```
+
+
+```{r}
+#Quint 4
+mean_Quint_4 <- mean(Pre_APL_Quint4$Outcome == 1)
+sd_1 <- sd(Pre_APL_Quint4$Outcome == 1)
+sample.n <- length(Pre_APL_Quint4$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_4 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_4_lower.bound <- mean_Quint_4 - margin.error
+Quint_4_upper.bound <- mean_Quint_4 + margin.error
+```
+
+
+```{r}
+#Quint 5
+mean_Quint_5 <- mean(Pre_APL_Quint5$Outcome == 1)
+sd_1 <- sd(Pre_APL_Quint5$Outcome == 1)
+sample.n <- length(Pre_APL_Quint5$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_5 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_5_lower.bound <- mean_Quint_5 - margin.error
+Quint_5_upper.bound <- mean_Quint_5 + margin.error
+
+
+pre_datadtap_SII <- read.csv("/Users/milenamarszalek/Downloads/pre_datadtap_SII.csv")
+
+```
+
+```{r}
+#Need to calculate weighted rate of dtap coverage per Quintile:pre, then post, then combine.
+
+post_datadtap_SII <- table(Post_APL$imdquintile)
+post_datadtap_SII <- as.data.frame(post_datadtap_SII)
+
+#rename column name to run_date
+post_datadtap_SII <- post_datadtap_SII %>%
+  rename(imdquintile = Var1)
+
+post_datadtap_SII <- post_datadtap_SII %>%
+  rename(Num = Freq)
+
+datadtapdenom_SII <- table(Post_APL_denom$imdquintile)
+
+datadtapdenom_SII <- as.data.frame(datadtapdenom_SII)
+
+#rename column name to run_date
+datadtapdenom_SII <- datadtapdenom_SII %>%
+  rename(imdquintile = Var1)
+
+post_datadtap_SII <- merge(post_datadtap_SII, datadtapdenom_SII, by = "imdquintile")
+
+post_datadtap_SII$Denom <- with(post_datadtap_SII, Num + Freq)
+
+post_datadtap_SII <- select(post_datadtap_SII, -c(Freq))
+post_datadtap_SII$rate <- with(post_datadtap_SII, Num/Denom*100)
+
+post_datadtap_SII$Int <- "post"
+
+
+fwrite(post_datadtap_SII, "//Users/milenamarszalek/Documents/Documents\ -\ Milena’s\ MacBook\\post_datadtap_SII.csv")
+```
+
+```{r}
+pre_datadtap_SII <- read.csv("/Users/milenamarszalek/Downloads/pre_datadtap_SII.csv")
+```
+
+
+```{r}
+
+#calculate separate standard errors for the values 
+
+Post_APL_All <- rbind(Post_APL, Post_APL_denom)
+
+Post_APL_All$Outcome <- "1"
+Post_APL_All$Outcome <- as.numeric(Post_APL_All$Outcome)
+
+Post_APL_All[Post_APL_All == ""] <- NA
+
+Post_APL_All$Outcome <- if_else(is.na(Post_APL_All$Codeterm), 0, Post_APL_All$Outcome)
+```
+
+
+```{r}
+Post_APL_Quint1 <- Post_APL_All %>%
+  filter(imdquintile == 1)
+
+
+Post_APL_Quint2 <- Post_APL_All %>%
+  filter(imdquintile == 2)
+
+
+Post_APL_Quint3 <- Post_APL_All %>%
+  filter(imdquintile == 3)
+
+
+Post_APL_Quint4 <- Post_APL_All %>%
+  filter(imdquintile == 4)
+
+
+Post_APL_Quint5 <- Post_APL_All %>%
+  filter(imdquintile == 5)
+
+```
+
+
+```{r}
+#Quint 1
+mean_Quint_1 <- mean(Post_APL_Quint1$Outcome == 1)
+sd_1 <- sd(Post_APL_Quint1$Outcome == 1)
+sample.n <- length(Post_APL_Quint1$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_1 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_1_lower.bound <- mean_Quint_1 - margin.error
+Quint_1_upper.bound <- mean_Quint_1 + margin.error
+
+
+#Quint 2
+mean_Quint_2 <- mean(Post_APL_Quint2$Outcome == 1)
+sd_1 <- sd(Post_APL_Quint2$Outcome == 1)
+sample.n <- length(Post_APL_Quint2$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_2 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_2_lower.bound <- mean_Quint_2 - margin.error
+Quint_2_upper.bound <- mean_Quint_2 + margin.error
+
+#Quint 3
+mean_Quint_3 <- mean(Post_APL_Quint3$Outcome == 1)
+sd_1 <- sd(Post_APL_Quint3$Outcome == 1)
+sample.n <- length(Post_APL_Quint3$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_3 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_3_lower.bound <- mean_Quint_3 - margin.error
+Quint_3_upper.bound <- mean_Quint_3 + margin.error
+
+#Quint 4
+mean_Quint_4 <- mean(Post_APL_Quint4$Outcome == 1)
+sd_1 <- sd(Post_APL_Quint4$Outcome == 1)
+sample.n <- length(Post_APL_Quint4$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_4 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_4_lower.bound <- mean_Quint_4 - margin.error
+Quint_4_upper.bound <- mean_Quint_4 + margin.error
+
+#Quint 5
+mean_Quint_5 <- mean(Post_APL_Quint5$Outcome == 1)
+sd_1 <- sd(Post_APL_Quint5$Outcome == 1)
+sample.n <- length(Post_APL_Quint5$Outcome)
+se <- sd_1/sqrt(sample.n)
+se_Quint_5 <- se*100
+
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * se
+
+Quint_5_lower.bound <- mean_Quint_5 - margin.error
+Quint_5_upper.bound <- mean_Quint_5 + margin.error
+```
+
+
+```{r}
+#Data table that combines SEs with data for both pre and post implementation is exported to Excel for ease, then reimported into R
+#Modified tables are then ready to be used to calculate SII
+
+post_datadtap_SII <- read.csv("/Users/milenamarszalek/Downloads/post_datadtap_SII.csv")
+
+```
+
+
+
+```{r}
+#Confidence Intervals, Standard Error
+#Then calculate difference in SII between pre and post implementation
+
+
+datadtap_SII <- rbind(pre_datadtap_SII, post_datadtap_SII)
+
+phe_sii(group_by(datadtap_SII, Int),
+        imdquintile,
+        Denom,
+        value_type = 0, # default normal distribution
+        value = rate,
+        lower_cl = LL_CI,
+        upper_cl = UL_CI,
+        confidence = 0.95,
+        rii = TRUE,
+        type = "standard")
+
+phe_sii(group_by(datadtap_SII, Int),
+        imdquintile,
+        Denom,
+        value_type = 0,
+        value = rate,
+        se = SE,
+        confidence = 0.95,
+        rii = TRUE,
+        type = "standard")
+```
+
+
+```{r}
+
+SII_dtap <- read.csv("/Users/milenamarszalek/Downloads/SII_dtap.csv")
+
+library(plotrix)
+
+SII_dtap$Intervention_Period <- as.factor(SII_dtap$Intervention_Period)
+
+
+#Bar chart comparing SII pre and post intervention
+
+ggplot(SII_dtap, aes(x = Intervention_Period, y = SII, fill = Intervention_Period)) + geom_bar(stat = "identity", color = "black", position = position_dodge()) + xlab("Intervention Period") + ylab("Slope Index of Inequality") + geom_errorbar(aes(ymin=LL_CI, ymax = UL_CI), width = .8, linewidth = .8, position = position_dodge(0.9), color = "black") + theme_classic() + theme(axis.title = element_text(size = 15, color = "black", face = "bold")) + theme(axis.text = element_text(size = 10))
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
