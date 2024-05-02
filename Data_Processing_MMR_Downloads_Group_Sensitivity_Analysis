@@ -1,0 +1,309 @@
+#Import file into R
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+ #file for sensitivity analysis has children between 12 and 14 months as a pre-specification for the cohorts, the processing of the file is the same as for the main analysis
+
+mmr_compass <- s3read_using(FUN = read.csv, object = "***")
+
+
+```
+
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+```
+
+
+```{r}
+
+#remove City practices
+#Rename column in file to then remove City practices
+mmr_compass <- mmr_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+mmr_compass <- mmr_compass[which(mmr_compass$Lsoa_2011_code %!in% City_lsoa), ]
+
+mmr_compass[mmr_compass == ""] <- NA
+
+#Remove invalid LSOA codes
+
+mmr_compass <- mmr_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+mmr_compass <- mmr_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+mmr_compass <- mmr_compass[!grepl('W', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('S', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('U', mmr_compass$Lsoa_2011_code),]
+
+```
+
+
+```{r}
+#clean data
+#convert character columns to workable dates 
+
+mmr_compass$Clinical_effective_date <- as.Date(mmr_compass$Clinical_effective_date, format = "%d/%m/%Y")
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end, format = "%d/%m/%Y")
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations.
+#Remove registrations with older start dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end)
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start)
+
+mmr_compass$Date_registered_end <- if_else(is.na(mmr_compass$Date_registered_end), as.Date("2050-01-01"), mmr_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(mmr_compass$Person_id))
+summary(mmr_compass)
+
+#Now one registration per child: 
+```
+
+
+
+```{r}
+#Create table only with practices that downloaded both versions of the tool
+#import practices file
+practice_downloads <- read.csv("/Users/milenamarszalek/Downloads/new_downloads.csv")
+library(dplyr)
+
+practice_downloads <- practice_downloads %>%
+  filter(Practice_name != "")
+
+practice_downloads <- select(practice_downloads, -c(X, X.1, X.2))
+
+#create workable Date of Download Variable for both Version 1 and Version 2 downloads
+practice_downloads$DoD_1 <- as.Date(practice_downloads$DoD_1, format = "%d/%m/%Y")
+practice_downloads$Dod_2 <- as.Date(practice_downloads$Dod_2, format = "%d/%m/%Y")
+
+#practices that downloaded V1 and V2.2
+sum(!is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
+
+
+#practices that downloaded V1/2 not V2.2 
+
+sum(!is.na(practice_downloads$DoD_1) & is.na(practice_downloads$Dod_2))
+
+#practices that downloaded V2.2 not V12 = 14
+
+sum(is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
+
+#266 practices in DDS download currently, but total is 274. 231 Downloaded V1. 80% of total practices in my DDS set is 219. 
+#231 - 219= 12
+#therefore inflection point is Jan 2023.
+```
+
+
+```{r}
+#Only keep practices with 1 and 2.2 download
+
+V1_prac <- practice_downloads$Ods_code
+
+mmr_compass_V2 <- mmr_compass[which(mmr_compass$Ods_code %in% V1_prac), ]
+
+```
+
+
+```{r}
+#separate out denominators, to create rate variable for ITS analysis table
+
+mmr_compass_denom_V2 <- mmr_compass_V2 %>%
+  filter(is.na(Codeterm))
+
+
+mmr_compass_V2 <- mmr_compass_V2 %>%
+  filter(!is.na(Codeterm))
+
+```
+
+
+
+```{r}
+#remove MMR before 1y old
+
+mmr_compass_V2 <- select(mmr_compass_V2, -c(Age_at_event))
+
+mmr_compass_V2 <- mmr_compass_V2 %>%
+  rename(Age_at_event = actual_age_at_event)
+
+
+mmr_compass_V2 <- mmr_compass_V2 %>%
+  filter(Age_at_event >= 1)
+```
+
+```{r}
+
+#create dataMMR_V2= monthly cohorts of children based on rundates
+
+dataMMR_V2 <- table(mmr_compass_V2$run_date)
+
+dataMMR_V2 <- as.data.frame(dataMMR_V2)
+
+#rename column name to run_date
+dataMMR_V2 <- dataMMR_V2 %>%
+  rename(run_date = Var1)
+
+dataMMR_V2$run_date <- as.character(dataMMR_V2$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(dataMMR_V2$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+dataMMR_V2 <- cbind(dataMMR_V2, x$month, x$year)
+
+str(dataMMR_V2)
+
+dataMMR_V2 <- select(dataMMR_V2, -c(run_date))
+dataMMR_V2 <- dataMMR_V2 %>%
+  rename(month = `x$month`)
+
+dataMMR_V2 <- dataMMR_V2 %>%
+  rename(year = `x$year`)
+```
+
+
+```{r}
+dataMMR_V2denom <- table(mmr_compass_denom_V2$run_date)
+
+dataMMR_V2denom <- as.data.frame(dataMMR_V2denom)
+
+#rename column name to run_date
+dataMMR_V2denom <- dataMMR_V2denom %>%
+  rename(run_date = Var1)
+
+dataMMR_V2denom$run_date <- as.character(dataMMR_V2denom$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(dataMMR_V2denom$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+dataMMR_V2denom <- cbind(dataMMR_V2denom, x$month, x$year)
+
+str(dataMMR_V2denom)
+
+dataMMR_V2denom <- select(dataMMR_V2denom, -c(run_date))
+dataMMR_V2denom <- dataMMR_V2denom %>%
+  rename(month_1 = `x$month`)
+
+dataMMR_V2denom <- dataMMR_V2denom %>%
+  rename(year_1 = `x$year`)
+
+dataMMR_V2denom$year <- as.numeric(dataMMR_V2denom$year)
+dataMMR_V2denom <- dataMMR_V2denom %>%
+  arrange(year)
+```
+
+```{r}
+#Create factor of 1 for variable representation of implementation period
+
+dataMMR_V2$apl_tool <- if_else(dataMMR_V2$year >= 2022, 1, 0)
+
+#order year by ascending order
+
+dataMMR_V2$year <- as.numeric(dataMMR_V2$year)
+dataMMR_V2 <- dataMMR_V2 %>%
+  arrange(year)
+
+#add in time column
+
+dataMMR_V2$time <- 1:nrow(dataMMR_V2)
+```
+
+
+```{r}
+#add in time_2 column for slope during implementation, and then slope for after implementation
+
+time_variables <- data.frame(time_2 = seq(1,25))
+
+table_0 <- data.frame(time_2 = rep(0,36))
+
+time_variables <- rbind(table_0, time_variables)
+
+dataMMR_V2 <- cbind(dataMMR_V2, time_variables)
+
+#rename column for MMR numerator
+
+dataMMR_V2 <- dataMMR_V2 %>%
+  rename(mmr_num = Freq)
+
+#make sure all columns are numeric
+
+dataMMR_V2$month <- as.numeric(dataMMR_V2$month)
+dataMMR_V2$mmr_num <- as.numeric(dataMMR_V2$mmr_num)
+dataMMR_V2$apl_tool <- as.numeric(dataMMR_V2$apl_tool)
+dataMMR_V2$time <- as.numeric(dataMMR_V2$time)
+```
+
+
+```{r}
+#combine MMR_num and denom together 
+
+dataMMR_V2denom <- select(dataMMR_V2denom, -c(year))
+
+dataMMR_V2 <- cbind(dataMMR_V2, dataMMR_V2denom)
+
+dataMMR_V2 <- select(dataMMR_V2, -c(month_1, year_1))
+
+dataMMR_V2$mmr_denom <- with(dataMMR_V2, mmr_num + Freq)
+
+dataMMR_V2 <- select(dataMMR_V2, -c(Freq))
+
+dataMMR_V2[36,4] <- 0
+
+#calculate rate of vaccination for each monthly cohort
+
+dataMMR_V2$rate <- with(dataMMR_V2, mmr_num/mmr_denom*100)
+```
+
+
+```{r}
+#Export to run in joinpoint
+library(data.table)
+MMR_V2 <- data.frame(dataMMR_V2$mmr_num, dataMMR_V2$mmr_denom, dataMMR_V2$month, dataMMR_V2$year, dataMMR_V2$rate)
+fwrite(MMR_V2, "***.csv")
