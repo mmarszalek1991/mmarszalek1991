@@ -1,0 +1,318 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+dtap_compass <- s3read_using(FUN = read.csv, object = "***.csv")
+```
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+```
+
+
+
+```{r}
+#remove City practices
+#Rename column in file to then remove City practices
+dtap_compass <- dtap_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+library("geojsonR")
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+dtap_compass <- dtap_compass[which(dtap_compass$Lsoa_2011_code %!in% City_lsoa), ]
+```
+
+
+```{r}
+#Remove invalid LSOA codes
+dtap_compass[dtap_compass == ""] <- NA
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+dtap_compass <- dtap_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+dtap_compass <- dtap_compass[!grepl('W', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('S', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('U', dtap_compass$Lsoa_2011_code),]
+
+length(unique(dtap_compass$Person_id))
+sum(is.na(dtap_compass$Lsoa_2011_code))
+```
+
+
+```{r}
+#clean data
+#convert character columns to workable dates 
+
+dtap_compass$Clinical_effective_date <- as.Date(dtap_compass$Clinical_effective_date, format = "%d/%m/%Y")
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end, format = "%d/%m/%Y")
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations
+#Remove registrations with older start dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end)
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start)
+
+dtap_compass$Date_registered_end <- if_else(is.na(dtap_compass$Date_registered_end), as.Date("2050-01-01"), dtap_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(dtap_compass$Person_id))
+summary(dtap_compass)
+
+#Now one registration per child: 
+```
+
+
+```{r}
+#Create table only with practices that downloaded both versions of the tool
+#import practices file
+
+practice_downloads <- read.csv("/Users/milenamarszalek/Downloads/new_downloads.csv")
+library(dplyr)
+
+practice_downloads <- practice_downloads %>%
+  filter(Practice_name != "")
+
+practice_downloads <- select(practice_downloads, -c(X, X.1, X.2))
+
+#create workable Date of Download Variable for both Version 1 and Version 2 downloads
+practice_downloads$DoD_1 <- as.Date(practice_downloads$DoD_1, format = "%d/%m/%Y")
+practice_downloads$Dod_2 <- as.Date(practice_downloads$Dod_2, format = "%d/%m/%Y")
+
+#practices that downloaded V1/2 and V2.2 
+sum(!is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
+
+
+#practices that downloaded V1/2 not V2.2
+
+sum(!is.na(practice_downloads$DoD_1) & is.na(practice_downloads$Dod_2))
+
+#practices that downloaded V2.2 not V12
+
+sum(is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
+
+#266 practices in DDS download currently, but total is 274. 231 Downloaded V1. 80% of total practices in my DDS set is 219. 
+#231 - 219= 12
+#therefore inflection point is Jan 2023.
+```
+
+
+
+```{r}
+#Only keep practices with 1 and 2.2 download
+
+V1_prac <- practice_downloads$Ods_code
+
+dtap_compass_V2 <- dtap_compass[which(dtap_compass$Ods_code %in% V1_prac), ]
+```
+
+
+```{r}
+#separate out denominators, to create rate variable for ITS analysis table
+
+dtap_compass_denom_V2 <- dtap_compass_V2 %>%
+  filter(is.na(Codeterm))
+
+
+dtap_compass_V2 <- dtap_compass_V2 %>%
+  filter(!is.na(Codeterm))
+
+```
+
+
+
+```{r}
+#remove dtap before 6 weeks old
+
+dtap_compass_V2 <- select(dtap_compass_V2, -c(Age_at_event))
+
+dtap_compass_V2 <- dtap_compass_V2 %>%
+  rename(Age_at_event = actual_age_at_event)
+
+
+dtap_compass_V2 <- dtap_compass_V2 %>%
+  filter(Age_at_event >= 0.12)
+```
+
+
+```{r}
+
+#create datadtap_V2= monthly cohorts of children based on rundates
+
+datadtap_V2 <- table(dtap_compass_V2$run_date)
+
+datadtap_V2 <- as.data.frame(datadtap_V2)
+
+#rename column name to run_date
+datadtap_V2 <- datadtap_V2 %>%
+  rename(run_date = Var1)
+
+datadtap_V2$run_date <- as.character(datadtap_V2$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(datadtap_V2$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+datadtap_V2 <- cbind(datadtap_V2, x$month, x$year)
+
+str(datadtap_V2)
+
+datadtap_V2 <- select(datadtap_V2, -c(run_date))
+datadtap_V2 <- datadtap_V2 %>%
+  rename(month = `x$month`)
+
+datadtap_V2 <- datadtap_V2 %>%
+  rename(year = `x$year`)
+```
+
+
+```{r}
+datadtap_V2denom <- table(dtap_compass_denom_V2$run_date)
+
+datadtap_V2denom <- as.data.frame(datadtap_V2denom)
+
+#rename column name to run_date
+datadtap_V2denom <- datadtap_V2denom %>%
+  rename(run_date = Var1)
+
+datadtap_V2denom$run_date <- as.character(datadtap_V2denom$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(datadtap_V2denom$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+datadtap_V2denom <- cbind(datadtap_V2denom, x$month, x$year)
+
+str(datadtap_V2denom)
+
+datadtap_V2denom <- select(datadtap_V2denom, -c(run_date))
+datadtap_V2denom <- datadtap_V2denom %>%
+  rename(month_1 = `x$month`)
+
+datadtap_V2denom <- datadtap_V2denom %>%
+  rename(year_1 = `x$year`)
+
+datadtap_V2denom$year <- as.numeric(datadtap_V2denom$year)
+datadtap_V2denom <- datadtap_V2denom %>%
+  arrange(year)
+```
+
+```{r}
+#Create factor of 1 for variable representation of implementation period
+
+datadtap_V2$apl_tool <- if_else(datadtap_V2$year >= 2022, 1, 0)
+
+#order year by ascending order
+
+datadtap_V2$year <- as.numeric(datadtap_V2$year)
+datadtap_V2 <- datadtap_V2 %>%
+  arrange(year)
+
+#add in time column
+
+datadtap_V2$time <- 1:nrow(datadtap_V2)
+
+#add in time_2 column for slope during implementation, and then slope for after implementation
+
+time_variables <- data.frame(time_2 = seq(1,25))
+
+table_0 <- data.frame(time_2 = rep(0,36))
+
+time_variables <- rbind(table_0, time_variables)
+
+datadtap_V2 <- cbind(datadtap_V2, time_variables)
+
+#rename column for dtap numerator
+
+datadtap_V2 <- datadtap_V2 %>%
+  rename(dtap_num = Freq)
+
+#make sure all columns are numeric
+
+datadtap_V2$month <- as.numeric(datadtap_V2$month)
+datadtap_V2$dtap_num <- as.numeric(datadtap_V2$dtap_num)
+datadtap_V2$apl_tool <- as.numeric(datadtap_V2$apl_tool)
+datadtap_V2$time <- as.numeric(datadtap_V2$time)
+```
+
+
+```{r}
+#combine dtap_num and denom together 
+
+datadtap_V2denom <- select(datadtap_V2denom, -c(year))
+
+datadtap_V2 <- cbind(datadtap_V2, datadtap_V2denom)
+
+datadtap_V2 <- select(datadtap_V2, -c(month_1, year_1))
+
+datadtap_V2$dtap_denom <- with(datadtap_V2, dtap_num + Freq)
+
+datadtap_V2 <- select(datadtap_V2, -c(Freq))
+
+datadtap_V2[36,4] <- 0
+
+#calculate rate of vaccination for each monthly cohort
+
+datadtap_V2$rate <- with(datadtap_V2, dtap_num/dtap_denom*100)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
