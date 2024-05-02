@@ -1,0 +1,367 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+#Import file into R
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+mmr_compass <- s3read_using(FUN = read.csv, object = "***.csv")
+
+library(dplyr)
+library(reshape2)
+library(DescTools)
+library(haven)
+library("geojsonR")
+#load relevant files for LSOA data
+
+LSOA_IMD_tercile <- read_dta("***.dta")
+View(LSOA_IMD_tercile)
+#file that identifies LSOAs that come up as NULL and therefore need to be excluded
+lsoa_null <- read.csv("***.csv")
+```
+
+
+
+```{r}
+#process data to remoce City practices
+#remove City practices
+
+mmr_compass <- mmr_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+mmr_compass <- mmr_compass[which(mmr_compass$Lsoa_2011_code %!in% City_lsoa), ]
+
+
+```
+
+```{r}
+
+#remove inactive LSOA codes
+
+mmr_compass[mmr_compass == ""] <- NA
+
+mmr_compass <- mmr_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+mmr_compass <- mmr_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+mmr_compass <- mmr_compass[!grepl('W', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('S', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('U', mmr_compass$Lsoa_2011_code),]
+
+
+```
+
+
+```{r}
+
+
+#clean data
+#convert character columns to workable dates 
+
+mmr_compass$Clinical_effective_date <- as.Date(mmr_compass$Clinical_effective_date, format = "%d/%m/%Y")
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end, format = "%d/%m/%Y")
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations. 
+#Remove registrations with older start dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end)
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start)
+
+mmr_compass$Date_registered_end <- if_else(is.na(mmr_compass$Date_registered_end), as.Date("2050-01-01"), mmr_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(mmr_compass$Person_id))
+summary(mmr_compass)
+
+mmr_compass <- select(mmr_compass, -c(Age_at_event))
+
+mmr_compass <- mmr_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+
+```
+
+
+```{r}
+
+#create numerator and denominator cohorts
+#numerator
+mmr_compass_1 <- mmr_compass %>%
+  filter(Age_at_event >= 1)
+
+#denominator
+mmr_compass_2 <- mmr_compass %>%
+  filter(is.na(Codeterm))
+```
+
+```{r}
+#Confidence intervals for vaccinated and non- cohorts
+
+Vaccinated_CI <- BinomCI(114885, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+Non_Vaccinated_CI <- BinomCI(30323, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+
+```
+
+
+```{r}
+#bind data together to create whole study population data table
+mmr_compass <- rbind(mmr_compass_1, mmr_compass_2)
+
+```
+
+
+```{r}
+#Process file to convert ethnicity into 5 categories
+
+mmr_compass$Nhs_5_term[is.na(mmr_compass$Nhs_5_term)] = "Missing"
+
+# now ethnicity = NA is called  Missing 
+
+mmr_compass[c("Nhs_5_term")][which(mmr_compass$Nhs_5_term == "Not Stated"), ] <- "Missing"
+mmr_compass[c("Nhs_5_term")][which(mmr_compass$Nhs_5_term == "Unclassified"), ] <- "Missing"
+mmr_compass[c("Nhs_5_term")][which(mmr_compass$Nhs_5_term == "Mixed"), ] <- "Mixed and Other"
+mmr_compass[c("Nhs_5_term")][which(mmr_compass$Nhs_5_term == "Other Ethnic Group"), ] <- "Mixed and Other"
+
+```
+
+
+
+```{r}
+#identify NULL LSOAs in the main data file that can be removed
+
+lsoa_null <- lsoa_null %>%
+  filter(!is.na(person_id))
+
+lsoa_null <- lsoa_null %>%
+  filter(lsoa != "NULL")
+
+lsoa_null <- lsoa_null[, c('lsoa','msoa','person_id')]
+
+lsoa_null <- lsoa_null[!duplicated(lsoa_null[c("person_id")]), ]
+
+lsoa_null <- lsoa_null %>%
+  rename(Person_id = person_id)
+
+lsoa_null <- lsoa_null %>%
+  rename(Lsoa_2011_code = lsoa)
+
+mmr_compass <- merge(mmr_compass, lsoa_null, by = "Person_id", all.x = T)
+
+mmr_compass$Lsoa_2011_code.x <- if_else(mmr_compass$Lsoa_2011_code.x == "NULL", mmr_compass$Lsoa_2011_code.y, mmr_compass$Lsoa_2011_code.x)
+
+mmr_compass <- select(mmr_compass, -c(Lsoa_2011_code.y))
+
+mmr_compass <- mmr_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code.x)
+
+
+```
+
+
+```{r}
+
+#Combine main data file with all active LSOAs with IMD file to get IMD deciles 
+LSOA_IMD_tercile <- LSOA_IMD_tercile %>%
+  rename(Lsoa_2011_code = lsoa2011)
+
+IMD_only <- LSOA_IMD_tercile[, c('Lsoa_2011_code','imddecile','imd2015score')]
+
+mmr_compass <- merge(mmr_compass, IMD_only, by = "Lsoa_2011_code", all.x = T)
+
+length(unique(mmr_compass$Person_id))
+
+mmr_compass <- mmr_compass[!duplicated(mmr_compass[c("Person_id")]), ]
+```
+
+
+```{r}
+
+#Convert IMD deciles to quintiles 
+mmr_compass$imdquintile <- if_else(mmr_compass$imddecile == 1 & mmr_compass$imddecile ==2, '1', 'NA')
+
+mmr_compass$imdquintile[mmr_compass$imddecile == 1] <- 1
+mmr_compass$imdquintile[mmr_compass$imddecile == 2] <- 1
+mmr_compass$imdquintile[mmr_compass$imddecile == 3] <- 2
+mmr_compass$imdquintile[mmr_compass$imddecile == 4] <- 2
+mmr_compass$imdquintile[mmr_compass$imddecile == 5] <- 3
+mmr_compass$imdquintile[mmr_compass$imddecile == 6] <- 3
+mmr_compass$imdquintile[mmr_compass$imddecile == 7] <- 4
+mmr_compass$imdquintile[mmr_compass$imddecile == 8] <- 4
+mmr_compass$imdquintile[mmr_compass$imddecile == 9] <- 5
+mmr_compass$imdquintile[mmr_compass$imddecile == 10] <- 5
+```
+
+
+```{r}
+#Create summary table of study population broken down by ethnicity
+DH <- sum(mmr_compass$Nhs_5_term == "White") 
+BH <- sum(mmr_compass$Nhs_5_term == "Asian or Asian British")
+AH <- sum(mmr_compass$Nhs_5_term == "Missing") 
+CH <- sum(mmr_compass$Nhs_5_term == "Black or Black British") 
+EH <- sum(mmr_compass$Nhs_5_term == "Mixed and Other")
+
+ETHNICITY_TABLE <- matrix(c(BH,DH,AH,CH,EH), ncol=1, byrow=TRUE)
+colnames(ETHNICITY_TABLE) <- c('MMR Cohort')
+rownames(ETHNICITY_TABLE) <- c('South Asian', 'White', 'Missing', 'Black or Black British', 'Mixed and Other')
+View(ETHNICITY_TABLE)
+```
+
+
+```{r}
+#Confidence Intervals for ethnicity summary table 
+
+
+Demo_White_CI <- BinomCI(50936, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_SA_CI <- BinomCI(43357,145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Bl_CI <- BinomCI(13252,145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Mix_CI <- BinomCI(19002, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Miss_CI <- BinomCI(18661, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_White_CI)
+View(Demo_Bl_CI)
+View(Demo_Mix_CI)
+View(Demo_SA_CI)
+View(Demo_Miss_CI)
+
+```
+
+
+```{r}
+#Summary table for study population gender
+DX<- sum(mmr_compass$Patient_gender_description == "Female")
+BX<- sum(mmr_compass$Patient_gender_description == "Male")
+
+INDEX_SEX_TABLE <- matrix(c(DX, BX), ncol=1, byrow=TRUE)
+colnames(INDEX_SEX_TABLE) <- c('MMR')
+rownames(INDEX_SEX_TABLE) <- c('Female', 'Male')
+View(INDEX_SEX_TABLE)
+```
+
+
+```{r}
+#Confidence intervals for study population gender
+
+Demo_Fem_CI <- BinomCI(70940, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Male_CI <- BinomCI(74266, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_Fem_CI)
+View(Demo_Male_CI)
+```
+
+
+```{r}
+#Summary table for study population IMD quintiles
+DI<- sum(mmr_compass$imdquintile == "5")
+BI <- sum(mmr_compass$imdquintile == "4")
+CI <- sum(mmr_compass$imdquintile == "3")
+AI <- sum(mmr_compass$imdquintile == "2")
+EI <- sum(mmr_compass$imdquintile == "1")
+
+INDEX_IMD_TABLE <- matrix(c(EI,AI,CI,BI,DI), ncol=1, byrow=TRUE)
+colnames(INDEX_IMD_TABLE) <- c(' MMR')
+rownames(INDEX_IMD_TABLE) <- c('IMD1', 'IMD2', 'IMD3', 'IMD4', 'IMD5')
+View(INDEX_IMD_TABLE)
+```
+
+
+```{r}
+#Confidence Intervals for study population IMD quintiles
+Demo_IMD1_CI <- BinomCI(54162, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD2_CI <- BinomCI(60138,145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD3_CI <- BinomCI(19445,145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD4_CI <- BinomCI(8272,145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD5_CI <- BinomCI(3191, 145208,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_IMD1_CI)
+View(Demo_IMD2_CI)
+View(Demo_IMD3_CI)
+View(Demo_IMD4_CI)
+View(Demo_IMD5_CI)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
