@@ -17,6 +17,7 @@ Try executing this chunk by clicking the *Run* button within the chunk or by pla
 #   J. Lopez Bernal, S. Cummins, A. Gasparrini
 ################################################################################
 #Modifications for MMR APL tool analysis
+#This file can be used for sensitivity analysis too providing the sensitivity analysis data processing table is used
 
 # Install packages required for the analysis 
 install.packages("lmtest") ; install.packages("Epi")
