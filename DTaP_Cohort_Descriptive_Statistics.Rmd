@@ -1,0 +1,369 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "****",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+dtap_compass <- s3read_using(FUN = read.csv, object = "***.csv")
+
+dtap_compass <- dtap_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+```
+
+```{r}
+library(dplyr)
+library(reshape2)
+library(DescTools)
+library(haven)
+library("geojsonR")
+```
+
+
+```{r}
+#load relevant files for LSOA data
+LSOA_IMD_tercile <- read_dta("***.dta")
+View(LSOA_IMD_tercile)
+#file that identifies LSOAs that come up as NULL and therefore need to be excluded
+lsoa_null <- read.csv("***.csv")
+```
+
+
+```{r}
+#process data to remoce City practices
+#remove City practices
+
+library("geojsonR")
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+dtap_compass <- dtap_compass[which(dtap_compass$Lsoa_2011_code %!in% City_lsoa), ]
+
+length(unique(dtap_compass$Person_id))
+
+
+
+```
+
+```{r}
+#remove inactive LSOA codes
+
+dtap_compass[dtap_compass == ""] <- NA
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+dtap_compass <- dtap_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+dtap_compass <- dtap_compass[!grepl('W', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('S', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('U', dtap_compass$Lsoa_2011_code),]
+
+length(unique(dtap_compass$Person_id))
+sum(is.na(dtap_compass$Lsoa_2011_code))
+
+
+```
+
+
+```{r}
+
+
+
+#clean data
+#convert character columns to workable dates 
+
+dtap_compass$Clinical_effective_date <- as.Date(dtap_compass$Clinical_effective_date, format = "%d/%m/%Y")
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end, format = "%d/%m/%Y")
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations.
+#Remove registrations with older start dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end)
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start)
+
+dtap_compass$Date_registered_end <- if_else(is.na(dtap_compass$Date_registered_end), as.Date("2050-01-01"), dtap_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(dtap_compass$Person_id))
+summary(dtap_compass)
+
+dtap_compass <- select(dtap_compass, -c(Age_at_event))
+
+dtap_compass <- dtap_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+```
+
+
+```{r} 
+#create numerator and denominator cohorts
+#numerator
+dtap_compass_1 <- dtap_compass %>%
+  filter(Age_at_event >= 0.12)
+
+#denominator
+dtap_compass_2 <- dtap_compass %>%
+  filter(is.na(Codeterm))
+```
+
+
+```{r}
+#Confidence intervals for vaccinated and non- cohorts
+DTaP_vaccinated_CI <- BinomCI(129781, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+DTaP_non_vaccinated_CI <- BinomCI(14009, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+```
+
+
+```{r}
+#bind numerator and denominator together to finish other descriptive analyses
+dtap_compass <- rbind(dtap_compass_1, dtap_compass_2)
+```
+
+
+```{r}
+#Process file to convert ethnicity into 5 categories
+dtap_compass$Nhs_5_term[is.na(dtap_compass$Nhs_5_term)] = "Missing"
+
+# now ethnicity = NA is called  Missing 
+
+dtap_compass[c("Nhs_5_term")][which(dtap_compass$Nhs_5_term == "Not Stated"), ] <- "Missing"
+dtap_compass[c("Nhs_5_term")][which(dtap_compass$Nhs_5_term == "Unclassified"), ] <- "Missing"
+dtap_compass[c("Nhs_5_term")][which(dtap_compass$Nhs_5_term == "Mixed"), ] <- "Mixed and Other"
+dtap_compass[c("Nhs_5_term")][which(dtap_compass$Nhs_5_term == "Other Ethnic Group"), ] <- "Mixed and Other"
+
+```
+
+
+```{r}
+#identify NULL LSOAs in the main data file that can be removed
+
+lsoa_null <- lsoa_null %>%
+  filter(!is.na(person_id))
+
+lsoa_null <- lsoa_null %>%
+  filter(lsoa != "NULL")
+
+lsoa_null <- lsoa_null[, c('lsoa','msoa','person_id')]
+
+lsoa_null <- lsoa_null[!duplicated(lsoa_null[c("person_id")]), ]
+
+lsoa_null <- lsoa_null %>%
+  rename(Person_id = person_id)
+
+lsoa_null <- lsoa_null %>%
+  rename(Lsoa_2011_code = lsoa)
+
+dtap_compass <- merge(dtap_compass, lsoa_null, by = "Person_id", all.x = T)
+
+dtap_compass$Lsoa_2011_code.x <- if_else(dtap_compass$Lsoa_2011_code.x == "NULL", dtap_compass$Lsoa_2011_code.y, dtap_compass$Lsoa_2011_code.x)
+
+dtap_compass <- select(dtap_compass, -c(Lsoa_2011_code.y))
+
+dtap_compass <- dtap_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code.x)
+
+```
+
+
+```{r}
+#Combine main data file with all active LSOAs with IMD file to get IMD deciles 
+LSOA_IMD_tercile <- LSOA_IMD_tercile %>%
+  rename(Lsoa_2011_code = lsoa2011)
+
+IMD_only <- LSOA_IMD_tercile[, c('Lsoa_2011_code','imddecile','imd2015score')]
+
+dtap_compass <- merge(dtap_compass, IMD_only, by = "Lsoa_2011_code", all.x = T)
+
+length(unique(dtap_compass$Person_id))
+
+dtap_compass <- dtap_compass[!duplicated(dtap_compass[c("Person_id")]), ]
+```
+
+
+```{r}
+#Convert IMD deciles to quintiles 
+dtap_compass$imdquintile <- if_else(dtap_compass$imddecile == 1 & dtap_compass$imddecile ==2, '1', 'NA')
+
+dtap_compass$imdquintile[dtap_compass$imddecile == 1] <- 1
+dtap_compass$imdquintile[dtap_compass$imddecile == 2] <- 1
+dtap_compass$imdquintile[dtap_compass$imddecile == 3] <- 2
+dtap_compass$imdquintile[dtap_compass$imddecile == 4] <- 2
+dtap_compass$imdquintile[dtap_compass$imddecile == 5] <- 3
+dtap_compass$imdquintile[dtap_compass$imddecile == 6] <- 3
+dtap_compass$imdquintile[dtap_compass$imddecile == 7] <- 4
+dtap_compass$imdquintile[dtap_compass$imddecile == 8] <- 4
+dtap_compass$imdquintile[dtap_compass$imddecile == 9] <- 5
+dtap_compass$imdquintile[dtap_compass$imddecile == 10] <- 5
+```
+
+
+```{r}
+#Create summary table of study population broken down by ethnicity
+DH <- sum(dtap_compass$Nhs_5_term == "White") 
+BH <- sum(dtap_compass$Nhs_5_term == "Asian or Asian British")
+AH <- sum(dtap_compass$Nhs_5_term == "Missing") 
+CH <- sum(dtap_compass$Nhs_5_term == "Black or Black British") 
+EH <- sum(dtap_compass$Nhs_5_term == "Mixed and Other")
+
+ETHNICITY_TABLE <- matrix(c(BH,DH,AH,CH,EH), ncol=1, byrow=TRUE)
+colnames(ETHNICITY_TABLE) <- c('dtap Cohort')
+rownames(ETHNICITY_TABLE) <- c('South Asian', 'White', 'Missing', 'Black or Black British', 'Mixed and Other')
+View(ETHNICITY_TABLE)
+```
+
+
+```{r}
+#Confidence Intervals for ethnicity summary table  
+
+
+Demo_White_CI <- BinomCI(50017, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_SA_CI <- BinomCI(42240,143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Bl_CI <- BinomCI(12721,143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Mix_CI <- BinomCI(18520, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Miss_CI <- BinomCI(20292, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_White_CI)
+View(Demo_Bl_CI)
+View(Demo_Mix_CI)
+View(Demo_SA_CI)
+View(Demo_Miss_CI)
+
+```
+
+
+```{r}
+#Summary table for study population gender
+DX<- sum(dtap_compass$Patient_gender_description == "Female")
+BX<- sum(dtap_compass$Patient_gender_description == "Male")
+
+INDEX_SEX_TABLE <- matrix(c(DX, BX), ncol=1, byrow=TRUE)
+colnames(INDEX_SEX_TABLE) <- c('dtap')
+rownames(INDEX_SEX_TABLE) <- c('Female', 'Male')
+View(INDEX_SEX_TABLE)
+```
+
+
+```{r}
+#Confidence intervals for study population gender
+
+Demo_Fem_CI <- BinomCI(69985, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_Male_CI <- BinomCI(73803, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_Fem_CI)
+View(Demo_Male_CI)
+```
+
+
+```{r}
+#Summary table for study population IMD quintiles
+
+DI<- sum(dtap_compass$imdquintile == "5")
+BI <- sum(dtap_compass$imdquintile == "4")
+CI <- sum(dtap_compass$imdquintile == "3")
+AI <- sum(dtap_compass$imdquintile == "2")
+EI <- sum(dtap_compass$imdquintile == "1")
+
+INDEX_IMD_TABLE <- matrix(c(EI,AI,CI,BI,DI), ncol=1, byrow=TRUE)
+colnames(INDEX_IMD_TABLE) <- c(' dtap')
+rownames(INDEX_IMD_TABLE) <- c('IMD1', 'IMD2', 'IMD3', 'IMD4', 'IMD5')
+View(INDEX_IMD_TABLE)
+```
+
+
+```{r}
+#Confidence Intervals for study population IMD quintiles
+Demo_IMD1_CI <- BinomCI(53487, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD2_CI <- BinomCI(59738,143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD3_CI <- BinomCI(19181,143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD4_CI <- BinomCI(8333,143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+Demo_IMD5_CI <- BinomCI(3051, 143790,
+        conf.level = 0.95,
+        method = "clopper-pearson")
+
+View(Demo_IMD1_CI)
+View(Demo_IMD2_CI)
+View(Demo_IMD3_CI)
+View(Demo_IMD4_CI)
+View(Demo_IMD5_CI)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
