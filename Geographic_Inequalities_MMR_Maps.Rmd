@@ -1,0 +1,442 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+#Import file into R
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+mmr_compass <- s3read_using(FUN = read.csv, object = "***")
+
+
+LSOA_lookup <- read.csv("***.csv")
+MSOA_lookup <- read.csv("***.csv")
+
+```
+
+
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+library(paletteer)
+library(ggplot2)
+library(sf)
+```
+
+```{r}
+
+#Remove invalid LSOA codes
+
+mmr_compass <- mmr_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+mmr_compass <- mmr_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+mmr_compass <- mmr_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+mmr_compass <- mmr_compass[!grepl('W', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('S', mmr_compass$Lsoa_2011_code),]
+```
+
+
+```{r}
+
+
+#clean data
+#convert character columns to workable dates 
+
+mmr_compass$Clinical_effective_date <- as.Date(mmr_compass$Clinical_effective_date, format = "%d/%m/%Y")
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end, format = "%d/%m/%Y")
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start, format = "%d/%m/%Y")
+mmr_compass$run_date <- as.Date(mmr_compass$run_date, format = "%d/%m/%Y")
+```
+
+
+
+
+```{r}
+#Remove excess registrations
+#Remove registrations with older start dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end)
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start)
+
+mmr_compass$Date_registered_end <- if_else(is.na(mmr_compass$Date_registered_end), as.Date("2050-01-01"), mmr_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(mmr_compass$Person_id))
+summary(mmr_compass)
+
+
+#Create denominator population
+
+mmr_compass_denom <- mmr_compass %>%
+  filter(Codeterm == "")
+
+```
+
+```{r}
+#remove MMR before 1y old
+
+mmr_compass <- select(mmr_compass, -c(Age_at_event))
+
+mmr_compass <- mmr_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+#numerator population
+
+mmr_compass <- mmr_compass %>%
+  filter(Age_at_event >= 1)
+```
+
+
+
+```{r}
+#Create two datasets- one with pre-implementation rates = Pre_APL, one with post implementation rates = Post_APL
+
+Pre_APL <- mmr_compass %>%
+  filter(run_date < '2022-03-01')
+
+Pre_APL_denom <- mmr_compass_denom %>%
+  filter(run_date < '2022-03-01')
+
+Post_APL <- mmr_compass %>%
+  filter(run_date > '2022-03-01')
+
+Post_APL_denom <- mmr_compass_denom %>%
+  filter(run_date > '2022-03-01')
+```
+
+
+```{r}
+#Create table suitable for mapping for pre-implementation rates
+
+Pre_APL_table <- table(Pre_APL$Lsoa_2011_code)
+
+Pre_APL_table <- as.data.frame(Pre_APL_table)
+
+Pre_APL_table_denom <- table(Pre_APL_denom$Lsoa_2011_code)
+
+Pre_APL_table_denom <- as.data.frame(Pre_APL_table_denom)
+
+Pre_APL_table <- Pre_APL_table %>%
+  rename(Lsoa_2011 = Var1)
+
+Pre_APL_table_denom <- Pre_APL_table_denom %>%
+  rename(Lsoa_2011 = Var1)
+
+```
+
+
+```{r}
+#combine MMR_num and denom together: pre-implementation data table
+
+Pre_APL_table <- merge(Pre_APL_table, Pre_APL_table_denom, by = "Lsoa_2011", all.x = T)
+
+Pre_APL_table <- Pre_APL_table %>%
+  rename(mmr_num = Freq.x)
+
+Pre_APL_table <- Pre_APL_table %>%
+  rename(mmr_denom = Freq.y)
+
+Pre_APL_table$mmr_denom <- with(Pre_APL_table, mmr_num + mmr_denom)
+
+Pre_APL_table$mmr_denom <- if_else(is.na(Pre_APL_table$mmr_denom), Pre_APL_table$mmr_num, Pre_APL_table$mmr_denom)
+
+#calculate MMR rates pre-implementation
+
+Pre_APL_table$rate <- with(Pre_APL_table, mmr_num/mmr_denom*100)
+```
+
+
+```{r}
+
+#create discrete variable called change that allows you to map different rates according to which colour band they lie in- Pre-implementation rates
+
+Pre_APL_table$change <-as.factor(ifelse(Pre_APL_table$rate <39, 1, ifelse(Pre_APL_table$rate >=40 & Pre_APL_table$rate <= 49, 2, ifelse(Pre_APL_table$rate >=50 & Pre_APL_table$rate <=59, 3, 4))))
+
+Pre_APL_table$change <- as.numeric(Pre_APL_table$change)
+
+#category 2= change category between 0-10% increase
+
+Pre_APL_table$change <- if_else(Pre_APL_table$rate >=70 & Pre_APL_table$rate <= 79, 5, Pre_APL_table$change)
+
+#category 3= change category of no change
+
+Pre_APL_table$change <- if_else(Pre_APL_table$rate >=80 & Pre_APL_table$rate <= 89, 6, Pre_APL_table$change)
+
+#category 4= change category between 10 - 20% decrease
+
+Pre_APL_table$change <- if_else(Pre_APL_table$rate >= 90, 7, Pre_APL_table$change)
+
+#category 5= denominator <10
+
+Pre_APL_table$change <- if_else(Pre_APL_table$mmr_denom <= 10, 0, Pre_APL_table$change)
+
+#category 6 = na change
+
+Pre_APL_table$change <- as.factor(Pre_APL_table$change)
+```
+
+```{r}
+#create table suitable for mapping: Post-implementation rates
+
+Post_APL_table <- table(Post_APL$Lsoa_2011_code)
+
+Post_APL_table <- as.data.frame(Post_APL_table)
+
+Post_APL_table_denom <- table(Post_APL_denom$Lsoa_2011_code)
+
+Post_APL_table_denom <- as.data.frame(Post_APL_table_denom)
+
+Post_APL_table <- Post_APL_table %>%
+  rename(Lsoa_2011 = Var1)
+
+Post_APL_table_denom <- Post_APL_table_denom %>%
+  rename(Lsoa_2011 = Var1)
+
+```
+
+
+```{r}
+#combine MMR_num and denom together: post-implementation
+
+Post_APL_table <- merge(Post_APL_table, Post_APL_table_denom, by = "Lsoa_2011", all.x = T)
+
+Post_APL_table <- Post_APL_table %>%
+  rename(mmr_num = Freq.x)
+
+Post_APL_table <- Post_APL_table %>%
+  rename(mmr_denom = Freq.y)
+
+Post_APL_table$mmr_denom <- with(Post_APL_table, mmr_num + mmr_denom)
+
+Post_APL_table$mmr_denom <- if_else(is.na(Post_APL_table$mmr_denom), Post_APL_table$mmr_num, Post_APL_table$mmr_denom)
+
+Post_APL_table$rate <- with(Post_APL_table, mmr_num/mmr_denom*100)
+
+```
+
+```{r}
+
+
+#create discrete variable called change that allows you to map different rates according to which colour band they lie in= post Implementation
+
+Post_APL_table$change <-as.factor(ifelse(Post_APL_table$rate <39, 1, ifelse(Post_APL_table$rate >=40 & Post_APL_table$rate <= 49, 2, ifelse(Post_APL_table$rate >=50 & Post_APL_table$rate <=59, 3, 4))))
+
+Post_APL_table$change <- as.numeric(Post_APL_table$change)
+
+#category 2= change category between 0-10% increase
+
+Post_APL_table$change <- if_else(Post_APL_table$rate >=70 & Post_APL_table$rate <= 79, 5, Post_APL_table$change)
+
+#category 3= change category of no change
+
+Post_APL_table$change <- if_else(Post_APL_table$rate >=80 & Post_APL_table$rate <= 89, 6, Post_APL_table$change)
+
+#category 4= change category between 10 - 20% decrease
+
+Post_APL_table$change <- if_else(Post_APL_table$rate >= 90, 7, Post_APL_table$change)
+
+#category 5= denominator <10
+
+Post_APL_table$change <- if_else(Post_APL_table$mmr_denom <= 10, 0, Post_APL_table$change)
+
+#category 6 = na change
+
+Post_APL_table$change <- as.factor(Post_APL_table$change)
+```
+
+
+```{r}
+#Import BK LSOA Polygon file 
+
+url_path_1 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000002.geojson"
+url_path_12 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000002.geojson"
+BK <- geojsonsf::geojson_sf(url_path_1)
+BK_MSOA <- geojsonsf::geojson_sf(url_path_12)
+
+LSOA_lookup <- LSOA_lookup %>%
+  rename(LADCD_ACTIVE = LAD22CD)
+
+#Import City LSOA Polygon file 
+
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000001.geojson"
+url_path_22 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+City_MSOA <- geojsonsf::geojson_sf(url_path_22)
+
+#Import Hackney LSOA Polygon file 
+
+url_path_3 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000012.geojson"
+url_path_32 <-"https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000012.geojson"
+Hackney <- geojsonsf::geojson_sf(url_path_3)
+CH_MSOA <- geojsonsf::geojson_sf(url_path_32)
+
+
+
+#Import Havering LSOA Polygon file 
+
+url_path_4 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000016.geojson"
+url_path_42 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000016.geojson"
+Hav <- geojsonsf::geojson_sf(url_path_4)
+HV_MSOA <- geojsonsf::geojson_sf(url_path_42)
+
+
+#Import Newham LSOA Polygon file 
+
+url_path_5 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000025.geojson"
+url_path_52 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000025.geojson"
+NH <- geojsonsf::geojson_sf(url_path_5)
+NH_MSOA <- geojsonsf::geojson_sf(url_path_52)
+
+#Import Redbridge LSOA Polygon file 
+
+url_path_6 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000026.geojson"
+url_path_62 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000026.geojson"
+RB <- geojsonsf::geojson_sf(url_path_6)
+RB_MSOA <- geojsonsf::geojson_sf(url_path_62)
+
+
+#Import Tower Hamlets LSOA Polygon file 
+
+url_path_7 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000030.geojson"
+url_path_72 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000030.geojson"
+TH <- geojsonsf::geojson_sf(url_path_7)
+TH_MSOA <- geojsonsf::geojson_sf(url_path_72)
+
+
+#Import Waltham Forest LSOA Polygon file 
+
+url_path_8 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa/E09000031.geojson"
+url_path_82 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/msoa/E09000031.geojson"
+WF <- geojsonsf::geojson_sf(url_path_8)
+WF_MSOA <- geojsonsf::geojson_sf(url_path_82)
+
+#Create shape file and import boundaries so that can sf file can be mapped
+
+All_East_London <- rbind(BK, City, Hackney, Hav, NH, RB, TH, WF)
+All_East_London_MSOA <- rbind(BK_MSOA, City_MSOA, CH_MSOA, HV_MSOA, NH_MSOA, RB_MSOA, TH_MSOA, WF_MSOA)
+
+All_East_London$geometry <- st_cast(All_East_London$geometry, "MULTIPOLYGON")
+
+All_East_London_MSOA$geometry <- st_cast(All_East_London_MSOA$geometry, "MULTIPOLYGON")
+
+All_East_London_MSOA <- st_as_sf(All_East_London_MSOA)
+
+LSOA <- All_East_London$LSOA21CD
+
+LSOA_lookup <- LSOA_lookup[which(LSOA_lookup$LSOA21CD %in% LSOA), ]
+
+LSOA_mini <- LSOA_lookup[, c('F_LSOA11CD','LSOA21CD','LADCD_ACTIVE')]
+
+boundaries_file <- st_read("/Users/milenamarszalek/Downloads/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp")
+
+NEL <- c("Barking and Dagenham", "Newham", "Hackney", "City of London", "Tower Hamlets", "Waltham Forest", "Redbridge", "Havering")
+
+boundaries_file <- boundaries_file[which(boundaries_file$NAME %in% NEL), ]
+```
+
+
+```{r}
+#Plot empty map of NEL and boundaries to check no gaps
+ggplot(data = All_East_London) + geom_sf()
+ggplot(data = All_East_London_MSOA) + geom_sf()
+ggplot(data = boundaries_file) + geom_sf()
+```
+
+
+```{r}
+#MSOA maps- pre-implementation map
+
+MSOA_lookup <- MSOA_lookup[which(MSOA_lookup$lsoa21cd %in% LSOA), ]
+
+MSOA_lookup <-MSOA_lookup %>%
+  rename(MSOA21CD = msoa21cd)
+
+MSOA_lookup <-MSOA_lookup %>%
+  rename(LSOA21CD = lsoa21cd)
+
+All_East_London_MSOA <- merge(All_East_London_MSOA, MSOA_lookup, by = "MSOA21CD", all.x = T)
+
+Pre_APL_table <- merge(Pre_APL_table, LSOA_mini, by = "F_LSOA11CD", all.x = T)
+
+Pre_APL_table <- select(Pre_APL_table, -c(F_LSOA11CD))
+
+Pre_APL_table_MSOA <- merge(Pre_APL_table, All_East_London_MSOA, by = "LSOA21CD", all.x = T)
+
+Pre_APL_table_MSOA <- st_as_sf(Pre_APL_table_MSOA)
+
+ggplot() +
+  geom_sf(data = Pre_APL_table_MSOA, mapping = aes(fill = change),  color = "white", show.legend = FALSE) +
+  geom_sf(data = boundaries_file, colour = "black", fill = NA, size = 1.5) +
+  theme_void() +
+  scale_fill_manual(values = c("#A1A6A4", "#CD0000", "#FF0000", "#FD8D3C","#FEB24C", "#F7FCB9", "#ADDD8E", "#78C679")) +
+  coord_sf(xlim = c(-0.105, 0.32),
+           ylim = c(51.49, 51.64))
+
+```
+
+
+```{r}
+#MSOA maps- post implementation
+
+Post_APL_table <- merge(Post_APL_table, LSOA_mini, by = "F_LSOA11CD", all.x = T)
+
+Post_APL_table <- select(Post_APL_table, -c(F_LSOA11CD))
+
+Post_APL_table_MSOA <- merge(Post_APL_table, All_East_London_MSOA, by = "LSOA21CD", all.x = T)
+
+Post_APL_table_MSOA <- st_as_sf(Post_APL_table_MSOA)
+
+ggplot() +
+  geom_sf(data = Post_APL_table_MSOA, mapping = aes(fill = change), color = "white", show.legend = FALSE) +
+  geom_sf(data = boundaries_file, colour = "black", fill = NA, size = 100) +
+  theme_void() +
+  scale_fill_manual(values = c("#A1A6A4", "#CD0000", "#FF0000", "#FD8D3C","#FEB24C", "#F7FCB9", "#ADDD8E", "#78C679")) +
+  coord_sf(xlim = c(-0.105, 0.32),
+           ylim = c(51.49, 51.64))
+
+
+```
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
