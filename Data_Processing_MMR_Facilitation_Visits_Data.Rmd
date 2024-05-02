@@ -285,7 +285,6 @@ dataMMR_V2denom <- dataMMR_V2denom %>%
 #Create factor of 1 for variable representation of implementation period
 
 dataMMR_V2$apl_tool <- if_else(dataMMR_V2$year >= 2022, 1, 0)
-dataMMR_V2$apl_tool <- if_else(dataMMR_V2$year >= 2023, 0 , dataMMR_V2$apl_tool)
 
 #order year by ascending order
 
@@ -307,13 +306,6 @@ time_variables <- rbind(table_0, time_variables)
 
 dataMMR_V2 <- cbind(dataMMR_V2, time_variables)
 
-time_variables_post <- data.frame(time_3 = seq(1,13))
-
-table_02 <- data.frame(time_3 = rep(0,48))
-
-time_variables_post <- rbind(table_02, time_variables_post)
-
-dataMMR_V2 <- cbind(dataMMR_V2, time_variables_post)
 
 #rename column for MMR numerator
 
@@ -409,7 +401,7 @@ dataMMR_fac <- dataMMR_fac %>%
 #Create factor of 1 for variable representation of implementation period
 
 dataMMR_fac$apl_tool <- if_else(dataMMR_fac$year >= 2022, 1, 0)
-dataMMR_fac$apl_tool <- if_else(dataMMR_fac$year >= 2023, 0 , dataMMR_fac$apl_tool)
+
 
 #order year by ascending order
 
@@ -428,14 +420,6 @@ table_0 <- data.frame(time_2 = rep(0,36))
 time_variables <- rbind(table_0, time_variables)
 
 dataMMR_fac <- cbind(dataMMR_fac, time_variables)
-
-time_variables_post <- data.frame(time_3 = seq(1,13))
-
-table_02 <- data.frame(time_3 = rep(0,48))
-
-time_variables_post <- rbind(table_02, time_variables_post)
-
-dataMMR_fac <- cbind(dataMMR_fac, time_variables_post)
 
 #rename column for MMR numerator
 
