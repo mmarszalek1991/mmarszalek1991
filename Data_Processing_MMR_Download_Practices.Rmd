@@ -315,7 +315,7 @@ dataMMR_V2$rate <- with(dataMMR_V2, mmr_num/mmr_denom*100)
 #Export to run in joinpoint
 library(data.table)
 MMR_V2 <- data.frame(dataMMR_V2$mmr_num, dataMMR_V2$mmr_denom, dataMMR_V2$month, dataMMR_V2$year, dataMMR_V2$rate)
-fwrite(MMR_V2, "//Users/milenamarszalek/Documents/Documents\ -\ Milena’s\ MacBook\\MMR_V2.csv")
+fwrite(MMR_V2, "***.csv")
 ```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
