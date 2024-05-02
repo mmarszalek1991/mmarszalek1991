@@ -1,0 +1,437 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+################################################################################
+# This file uses code based on the following paper:
+#   Interrupted time series regression for the evaluation of public health 
+#     interventions: a tutorial
+#   IJE 2016
+#   J. Lopez Bernal, S. Cummins, A. Gasparrini
+################################################################################
+#Modifications for MMR APL tool analysis
+
+# Install packages required for the analysis 
+install.packages("lmtest") ; install.packages("Epi")
+install.packages("tsModel"); install.packages("vcd") ; install.packages("questionr")  
+
+# load the packages
+library(foreign) ; library(tsModel) ; library("lmtest") ; library("Epi")
+library("splines") ; library("vcd")
+
+# This dataset includes the following variables:
+# year
+# month
+# time = elapsed time since the start of the study
+# mmr_num = count of children that received 1st MMR between 12-14 months (the outcome)
+# apl_tool = APL tool (the intervention) coded 0 before intervention, 1 after
+# mmr_denom = eligible children
+```
+
+
+```{r}
+#View data file created from Data_Processing_MMR_Facilitation_Visit_Practices
+
+View(dataMMR_fac)
+```
+
+```{r}
+# Create baseline plot for pre-implementation period
+
+plot(dataMMR_fac$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months ",
+  bty="l",xaxt="n")
+# shade the post intervention period grey
+rect(36,0,80,140,col=grey(0.9),border=F)
+rect(48,0,80,140,col=grey(0.95),border=F)
+# plot the observed rate for pre-intervention period
+points(dataMMR_fac$rate[dataMMR_fac$apl_tool==0],cex=0.7, type = "l")
+#specify the x-axis (i.e. time units)
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:5*12+6,tick=F,labels=2019:2024)
+# add a title
+title("1st MMR by 18 months, Facilitation Visits and Download Group")
+```
+
+
+```{r}
+# It is also useful to produce summary statistics
+summary(dataMMR_fac)
+
+#tabulate MMR before and after APL tool
+
+summary(dataMMR_fac$mmr_num[dataMMR_fac$apl_tool==0])
+summary(dataMMR_fac$mmr_num[dataMMR_fac$apl_tool==1])
+
+```
+
+```{r}
+#Mean and Confidence interval for the pre-implementation period
+dataMMR_fac$group <- if_else(dataMMR_fac$time <= 36, 0, 1)
+
+#Need to calculate weights by calculating total of denom as % of total population, then the % of it from the sample. 
+
+#total Fac children: 33520
+#Out of all children: 145808
+#33520/145808 * 100
+
+#sample_pop_percent: denom/sample * 100
+
+
+dataMMR_fac$percent_pop <- "22.98"
+dataMMR_fac$sample_pop <- dataMMR_fac$mmr_denom/33520*100
+dataMMR_fac$percent_pop <- as.numeric(dataMMR_fac$percent_pop)
+dataMMR_fac$weight <- dataMMR_fac$percent_pop/dataMMR_fac$sample_pop
+
+
+#Create groupings needed to calculate the weighted mean
+#% population / % sample = weight
+#weight x rate= weighted rate. 
+
+x1 <- dataMMR_fac$rate[dataMMR_fac$group == 0]
+w1 <- dataMMR_fac$weight[dataMMR_fac$group == 0]
+
+x2 <- dataMMR_fac$rate[dataMMR_fac$group == 1]
+w2 <- dataMMR_fac$weight[dataMMR_fac$group == 1]
+
+weight_mean_pre <- weighted.mean(x1,w1)
+weight_mean_int <- weighted.mean(x2,w2)
+```
+
+
+```{r}
+
+
+#Calculate standard errors and standard deviation
+
+sample.n <- length(dataMMR_fac$rate)
+sample.sd <- sd(dataMMR_fac$rate[dataMMR_fac$apl_tool==0])
+sample.se <- sample.sd/sqrt(sample.n)
+  
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+
+#Confidence Interval calculation
+
+margin.error <- t.score * sample.se
+
+lower.bound <- weight_mean_pre - margin.error
+upper.bound <- weight_mean_pre + margin.error
+print(c(lower.bound,upper.bound))
+```
+
+```{r}
+#Mean and Confidence interval for the post-implementation period
+
+sample.n <- length(dataMMR_fac$rate)
+sample.sd <- sd(dataMMR_fac$rate[dataMMR_fac$apl_tool==1])
+sample.se <- sample.sd/sqrt(sample.n)
+  
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * sample.se
+
+lower.bound <- weight_mean_int - margin.error
+upper.bound <- weight_mean_int + margin.error
+print(c(lower.bound,upper.bound))
+```
+
+```{r}
+##
+#Step 4: Poisson regression model
+# We have chosen a step change model and Poisson Regression to model count data
+# In order to do this we model the count data directly (rather than the rate
+#   which doesn't follow a Poisson distribution), using the population (log
+#   transformed) as an offset variable in order to transform back to rates
+
+#Poisson with the standardised population as an offset
+modelfac1 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2, family=poisson, dataMMR_fac)
+summary(modelfac1)
+summary(modelfac1)$dispersion
+round(ci.lin(modelfac1,Exp=T),3)
+```
+
+
+```{r}
+# create a new dataframe with 0.1 time units to improve the graph
+dataMMR_facnew <- data.frame(mmr_denom=mean(dataMMR_fac$mmr_denom),apl_tool=rep(c(0,1),c(358,242)),
+  time= 1:600/10,month=rep(1:120/10, 5))
+View(dataMMR_facnew)
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMR_facnew <- cbind(dataMMR_facnew, time_variables_its)
+
+# We generate predicted values based on the model in order to create a plot
+predfac1 <- predict(modelfac1,type="response",dataMMR_facnew)/mean(dataMMR_fac$mmr_denom)*100
+
+#This can then be plotted along with a scatter graph (see above)
+plot(dataMMR_fac$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months", bty = "l", xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR_fac$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines((1:600/10),predfac1,col=2)
+title("1st MMR by 18 months, Facilitator Visit and Download Group")
+
+
+```
+
+
+```{r}
+# to plot the counterfactual scenario we create a data frame as if the intervention were never implemented
+
+dataMMR_facnew <- data.frame(mmr_denom=mean(dataMMR_fac$mmr_denom),apl_tool=0,time=1:600/10,
+  month=rep(1:120/10,5))
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMR_facnew <- cbind(dataMMR_facnew, time_variables_its)
+
+
+# generate predictions under the counterfactual scenario and add it to the plot
+predfac1b <- predict(modelfac1,dataMMR_facnew,type="response")/mean(dataMMR_fac$mmr_denom)*100
+plot(dataMMR_fac$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months", bty = "l", xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+rect(48,0,61,140,col=grey(0.95),border=F)
+points(dataMMR_fac$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines((1:600/10),predfac1,col=2)
+lines(dataMMR_facnew$time,predfac1b,col=2,lty=2)
+title("1st MMR by 18 months, Facilitator Visit and Download Group")
+
+```
+
+
+```{r}
+# return the data frame to the scenario including the intervention
+dataMMR_facnew <- data.frame(mmr_denom=mean(dataMMR_fac$mmr_denom),apl_tool=rep(c(0,1),c(358,242)),
+  time= 1:600/10,month=rep(1:120/10,5))
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMR_facnew <- cbind(dataMMR_facnew, time_variables_its)
+
+```
+
+
+```{r}
+# Factoring in Overdispersion: Quasi-Poisson model 
+
+modelfac2 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2, family=quasipoisson,
+  dataMMR_fac)
+summary(modelfac2)
+summary(modelfac2)$dispersion
+round(ci.lin(modelfac2,Exp=T),3)
+```
+
+
+```{r}
+#b) Model checking and autocorrelation
+
+# Check the residuals by plotting against time
+res2 <- residuals(modelfac2,type="deviance")
+plot(dataMMR_fac$time,res2,ylim=c(-5,10),pch=19,cex=0.7,col=grey(0.6),
+  main="Residuals over time",ylab="Deviance residuals",xlab="Date")
+abline(h=0,lty=2,lwd=2)
+```
+
+
+```{r}
+# Further check for autocorrelation by examining the autocorrelation and
+#   partial autocorrelation functions
+acf(res2)
+pacf(res2)
+```
+
+
+```{r}
+#c) adjusting for seasonality: harmonic terms specifying the number of sin and cosine pairs to include and the length of the period (12 months)
+modelfac3 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2 +
+  harmonic(month,2,12), family=quasipoisson, dataMMR_fac)
+summary(modelfac3)
+summary(modelfac3)$dispersion
+tbl_regression(modelfac3, exponentiate = T)
+
+# EFFECTS
+ci.lin(modelfac3,Exp=T)["apl_tool",5:7]
+
+# TREND
+exp(coef(modelfac3)["time"]*12)
+```
+
+
+```{r}
+# We again check the model and autocorrelation functions
+res3 <- residuals(modelfac3,type="deviance")
+
+
+plot(res3,ylim=c(-5,10),pch=19,cex=0.7,col=grey(0.6),main="Residuals over time",
+  ylab="Deviance residuals",xlab="Date")
+abline(h=0,lty=2,lwd=2)
+acf(res3)
+pacf(res3)
+```
+
+
+```{r}
+# predict and plot of the seasonally adjusted model
+
+predfac3 <- predict(modelfac3,type="response",dataMMR_facnew)/mean(dataMMR_fac$mmr_denom)*100
+plot(dataMMR_fac$rate,type="l",ylim=c(50,100),xlab="Year",ylab="Rate (%) of 1st MMR vaccination by 18 months",
+  bty="l",xaxt="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+rect(48,0,61,140,col=grey(0.95),border=F)
+points(dataMMR_fac$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines(1:600/10,predfac3,col=2)
+title("North East London, 2019-2023")
+
+```
+
+
+```{r}
+# it is sometimes difficult to clearly see the change graphically in the
+#   seasonally adjusted model, therefore it can be useful to plot a straight
+#   line representing a 'deseasonalised' trend
+# this can be done by predicting all the observations for the same month, in
+#   this case we used June
+predfac3b <- predict(modelfac3,type="response",transform(dataMMR_facnew,month=6))/
+  mean(dataMMR_fac$mmr_denom)*100
+
+#this can then be added to the plot as a dashed line
+
+plot(dataMMR_fac$rate,type="l",ylim=c(50,100),xlab="Year",ylab="Rate (%) of 1st MMR vaccination by 18 months",
+  bty="l",xaxt="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+rect(48,0,61,140,col=grey(0.95),border=F)
+points(dataMMR_fac$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines(1:600/10,predfac3,col=2)
+lines(1:600/10,predfac3b,col=2,lty=2)
+title("North East London, 2019-2023")
+```
+
+
+```{r}
+# test if seasonal model or overdispersed model has a better fit
+# the selected test here is an F-test, which accounts for the overdispersion,
+anova(modelfac2,modelfac3,test="F")
+```
+
+
+```{r}
+#combine dataMMR_V2 + dataMMR_fac to test whether Facilitation Visits have a stronger effect size comparing to Downloads alone
+
+dataMMR_fac$fac <- if_else(dataMMR_fac$apl_tool == 0, 0, 1)
+dataMMR_V2$fac <- "0"
+
+dataMMR_fac <- select(dataMMR_fac, -c(group, percent_pop, sample_pop, weight))
+
+dataMMR_fac_interraction <- rbind(dataMMR_V2, dataMMR_fac)
+
+#create variables to represent different combinations of either downloads and facilitator visits during and after the intervention apl = 0, fac = 0, apl = 1, fac = 0, apl = 1, fac = 1. 
+
+dataMMR_fac_interraction$fac <- as.numeric(dataMMR_fac_interraction$fac)
+
+dataMMR_fac_interraction$var <-  if_else(dataMMR_fac_interraction$apl_tool == 0 & dataMMR_fac_interraction$fac == 0, 0, 1)
+
+dataMMR_fac_interraction$var <- ifelse(dataMMR_fac_interraction$apl_tool  == 1 & dataMMR_fac_interraction$fac == 1, 2, dataMMR_fac_interraction$var)
+  
+dataMMR_fac_interraction$var <- as.factor(dataMMR_fac_interraction$var)
+
+```
+
+```{r}
+#New Model with presence of facilitator visit and download comparing to download alone
+
+modelfac5 <- glm(mmr_num ~ offset(log(mmr_denom)) + var + time + time_2, family=quasipoisson,
+  dataMMR_fac_interraction)
+summary(modelfac5)
+summary(modelfac5)$dispersion
+round(ci.lin(modelfac5,Exp=T),3)
+tbl_regression(modelfac5, exponentiate = T)
+```
+
+```{r}
+#b) Model checking and autocorrelation
+
+# Check the residuals by plotting against time
+res2 <- residuals(modelfac5,type="deviance")
+plot(dataMMR_fac_interraction$time,res2,ylim=c(-5,10),pch=19,cex=0.7,col=grey(0.6),
+  main="Residuals over time",ylab="Deviance residuals",xlab="Date")
+abline(h=0,lty=2,lwd=2)
+```
+
+
+```{r}
+# Further check for autocorrelation by examining the autocorrelation and
+#   partial autocorrelation functions
+acf(res2)
+pacf(res2)
+```
+
+```{r}
+#Run Data_Processing and Data_Analysis files for both Download Only and Facilitator Groups before creating graph
+# Final graph- with overall rate for MMR, comparing trends for Download Only Group comparing Facilitator Visits Group
+
+plot(dataMMR_V2$rate,type="l",ylim=c(50,100), xlab="Year", ylab= "Rate (%) of 1st MMR vaccination by 18 months", bty="l",xaxt="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR_V2$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines(1:600/10,predfac1,col="red2")
+lines(1:600/10,predV21,col="aquamarine")
+title("North East London, 2019-2023")
+legend("bottomleft",c("Rate of 1st MMR by 18m: Intervention Practices", "Facilitator Visit + Download", "Download Only"),lty=1,
+  col=c("black","red2","aquamarine"),inset=0.05,bty="n",cex=0.7)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
