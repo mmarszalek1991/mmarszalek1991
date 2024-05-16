@@ -115,57 +115,13 @@ summary(dtap_compass)
 
 
 ```{r}
-#Create table only with practices that downloaded both versions of the tool
-#import practices file
-
-practice_downloads <- read.csv("/Users/milenamarszalek/Downloads/new_downloads.csv")
-library(dplyr)
-
-practice_downloads <- practice_downloads %>%
-  filter(Practice_name != "")
-
-practice_downloads <- select(practice_downloads, -c(X, X.1, X.2))
-
-#create workable Date of Download Variable for both Version 1 and Version 2 downloads
-practice_downloads$DoD_1 <- as.Date(practice_downloads$DoD_1, format = "%d/%m/%Y")
-practice_downloads$Dod_2 <- as.Date(practice_downloads$Dod_2, format = "%d/%m/%Y")
-
-#practices that downloaded V1/2 and V2.2 
-sum(!is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
-
-
-#practices that downloaded V1/2 not V2.2
-
-sum(!is.na(practice_downloads$DoD_1) & is.na(practice_downloads$Dod_2))
-
-#practices that downloaded V2.2 not V12
-
-sum(is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
-
-#266 practices in DDS download currently, but total is 274. 231 Downloaded V1. 80% of total practices in my DDS set is 219. 
-#231 - 219= 12
-#therefore inflection point is Jan 2023.
-```
-
-
-
-```{r}
-#Only keep practices with 1 and 2.2 download
-
-V1_prac <- practice_downloads$Ods_code
-
-dtap_compass_V2 <- dtap_compass[which(dtap_compass$Ods_code %in% V1_prac), ]
-```
-
-
-```{r}
 #separate out denominators, to create rate variable for ITS analysis table
 
-dtap_compass_denom_V2 <- dtap_compass_V2 %>%
+dtap_compass_denom <- dtap_compass %>%
   filter(is.na(Codeterm))
 
 
-dtap_compass_V2 <- dtap_compass_V2 %>%
+dtap_compass <- dtap_compass %>%
   filter(!is.na(Codeterm))
 
 ```
@@ -175,95 +131,95 @@ dtap_compass_V2 <- dtap_compass_V2 %>%
 ```{r}
 #remove dtap before 6 weeks old
 
-dtap_compass_V2 <- select(dtap_compass_V2, -c(Age_at_event))
+dtap_compass <- select(dtap_compass, -c(Age_at_event))
 
-dtap_compass_V2 <- dtap_compass_V2 %>%
+dtap_compass <- dtap_compass %>%
   rename(Age_at_event = actual_age_at_event)
 
 
-dtap_compass_V2 <- dtap_compass_V2 %>%
+dtap_compass <- dtap_compass %>%
   filter(Age_at_event >= 0.12)
 ```
 
 
 ```{r}
 
-#create datadtap_V2= monthly cohorts of children based on rundates
+#create datadtap= monthly cohorts of children based on rundates
 
-datadtap_V2 <- table(dtap_compass_V2$run_date)
+datadtap <- table(dtap_compass$run_date)
 
-datadtap_V2 <- as.data.frame(datadtap_V2)
+datadtap <- as.data.frame(datadtap)
 
 #rename column name to run_date
-datadtap_V2 <- datadtap_V2 %>%
+datadtap <- datadtap %>%
   rename(run_date = Var1)
 
-datadtap_V2$run_date <- as.character(datadtap_V2$run_date)
+datadtap$run_date <- as.character(datadtap$run_date)
 
 #split run_date column to get into format for ITS tablem, just need the month and the year
-x <- colsplit(datadtap_V2$run_date, "/", c("day", "month", "year"))
+x <- colsplit(datadtap$run_date, "/", c("day", "month", "year"))
 x$month <- as.character(x$month)
 x$year <- as.character(x$year)
 
-datadtap_V2 <- cbind(datadtap_V2, x$month, x$year)
+datadtap <- cbind(datadtap, x$month, x$year)
 
-str(datadtap_V2)
+str(datadtap)
 
-datadtap_V2 <- select(datadtap_V2, -c(run_date))
-datadtap_V2 <- datadtap_V2 %>%
+datadtap <- select(datadtap, -c(run_date))
+datadtap <- datadtap %>%
   rename(month = `x$month`)
 
-datadtap_V2 <- datadtap_V2 %>%
+datadtap <- datadtap %>%
   rename(year = `x$year`)
 ```
 
 
 ```{r}
-datadtap_V2denom <- table(dtap_compass_denom_V2$run_date)
+datadtapdenom <- table(dtap_compass_denom$run_date)
 
-datadtap_V2denom <- as.data.frame(datadtap_V2denom)
+datadtapdenom <- as.data.frame(datadtapdenom)
 
 #rename column name to run_date
-datadtap_V2denom <- datadtap_V2denom %>%
+datadtapdenom <- datadtapdenom %>%
   rename(run_date = Var1)
 
-datadtap_V2denom$run_date <- as.character(datadtap_V2denom$run_date)
+datadtapdenom$run_date <- as.character(datadtapdenom$run_date)
 
 #split run_date column to get into format for ITS tablem, just need the month and the year
-x <- colsplit(datadtap_V2denom$run_date, "/", c("day", "month", "year"))
+x <- colsplit(datadtapdenom$run_date, "/", c("day", "month", "year"))
 x$month <- as.character(x$month)
 x$year <- as.character(x$year)
 
-datadtap_V2denom <- cbind(datadtap_V2denom, x$month, x$year)
+datadtapdenom <- cbind(datadtapdenom, x$month, x$year)
 
-str(datadtap_V2denom)
+str(datadtapdenom)
 
-datadtap_V2denom <- select(datadtap_V2denom, -c(run_date))
-datadtap_V2denom <- datadtap_V2denom %>%
+datadtapdenom <- select(datadtapdenom, -c(run_date))
+datadtapdenom <- datadtapdenom %>%
   rename(month_1 = `x$month`)
 
-datadtap_V2denom <- datadtap_V2denom %>%
+datadtapdenom <- datadtapdenom %>%
   rename(year_1 = `x$year`)
 
-datadtap_V2denom$year <- as.numeric(datadtap_V2denom$year)
-datadtap_V2denom <- datadtap_V2denom %>%
+datadtapdenom$year <- as.numeric(datadtapdenom$year)
+datadtapdenom <- datadtapdenom %>%
   arrange(year)
 ```
 
 ```{r}
 #Create factor of 1 for variable representation of implementation period
 
-datadtap_V2$apl_tool <- if_else(datadtap_V2$year >= 2022, 1, 0)
+datadtap$apl_tool <- if_else(datadtap$year >= 2022, 1, 0)
 
 #order year by ascending order
 
-datadtap_V2$year <- as.numeric(datadtap_V2$year)
-datadtap_V2 <- datadtap_V2 %>%
+datadtap$year <- as.numeric(datadtap$year)
+datadtap <- datadtap %>%
   arrange(year)
 
 #add in time column
 
-datadtap_V2$time <- 1:nrow(datadtap_V2)
+datadtap$time <- 1:nrow(datadtap)
 
 #add in time_2 column for slope during implementation, and then slope for after implementation
 
@@ -273,37 +229,37 @@ table_0 <- data.frame(time_2 = rep(0,36))
 
 time_variables <- rbind(table_0, time_variables)
 
-datadtap_V2 <- cbind(datadtap_V2, time_variables)
+datadtap <- cbind(datadtap, time_variables)
 
 #rename column for dtap numerator
 
-datadtap_V2 <- datadtap_V2 %>%
+datadtap <- datadtap %>%
   rename(dtap_num = Freq)
 
 #make sure all columns are numeric
 
-datadtap_V2$month <- as.numeric(datadtap_V2$month)
-datadtap_V2$dtap_num <- as.numeric(datadtap_V2$dtap_num)
-datadtap_V2$apl_tool <- as.numeric(datadtap_V2$apl_tool)
-datadtap_V2$time <- as.numeric(datadtap_V2$time)
+datadtap$month <- as.numeric(datadtap$month)
+datadtap$dtap_num <- as.numeric(datadtap$dtap_num)
+datadtap$apl_tool <- as.numeric(datadtap$apl_tool)
+datadtap$time <- as.numeric(datadtap$time)
 ```
 
 
 ```{r}
 #combine dtap_num and denom together 
 
-datadtap_V2denom <- select(datadtap_V2denom, -c(year))
+datadtapdenom <- select(datadtapdenom, -c(year))
 
-datadtap_V2 <- cbind(datadtap_V2, datadtap_V2denom)
+datadtap <- cbind(datadtap, datadtapdenom)
 
-datadtap_V2 <- select(datadtap_V2, -c(month_1, year_1))
+datadtap <- select(datadtap, -c(month_1, year_1))
 
-datadtap_V2$dtap_denom <- with(datadtap_V2, dtap_num + Freq)
+datadtap$dtap_denom <- with(datadtap, dtap_num + Freq)
 
-datadtap_V2 <- select(datadtap_V2, -c(Freq))
+datadtap <- select(datadtap, -c(Freq))
 
-datadtap_V2[36,4] <- 0
+datadtap[36,4] <- 0
 
 #calculate rate of vaccination for each monthly cohort
 
-datadtap_V2$rate <- with(datadtap_V2, dtap_num/dtap_denom*100)
+datadtap$rate <- with(datadtap, dtap_num/dtap_denom*100)
