@@ -106,56 +106,13 @@ summary(mmr_compass)
 
 
 ```{r}
-#Create table only with practices that downloaded both versions of the tool
-#import practices file
-practice_downloads <- read.csv("/Users/milenamarszalek/Downloads/new_downloads.csv")
-library(dplyr)
-
-practice_downloads <- practice_downloads %>%
-  filter(Practice_name != "")
-
-practice_downloads <- select(practice_downloads, -c(X, X.1, X.2))
-
-#create workable Date of Download Variable for both Version 1 and Version 2 downloads
-practice_downloads$DoD_1 <- as.Date(practice_downloads$DoD_1, format = "%d/%m/%Y")
-practice_downloads$Dod_2 <- as.Date(practice_downloads$Dod_2, format = "%d/%m/%Y")
-
-#practices that downloaded V1 and V2.2
-sum(!is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
-
-
-#practices that downloaded V1/2 not V2.2 
-
-sum(!is.na(practice_downloads$DoD_1) & is.na(practice_downloads$Dod_2))
-
-#practices that downloaded V2.2 not V12 = 14
-
-sum(is.na(practice_downloads$DoD_1) & !is.na(practice_downloads$Dod_2))
-
-#266 practices in DDS download currently, but total is 274. 231 Downloaded V1. 80% of total practices in my DDS set is 219. 
-#231 - 219= 12
-#therefore inflection point is Jan 2023.
-```
-
-
-```{r}
-#Only keep practices with 1 and 2.2 download
-
-V1_prac <- practice_downloads$Ods_code
-
-mmr_compass_V2 <- mmr_compass[which(mmr_compass$Ods_code %in% V1_prac), ]
-
-```
-
-
-```{r}
 #separate out denominators, to create rate variable for ITS analysis table
 
-mmr_compass_denom_V2 <- mmr_compass_V2 %>%
+mmr_compass_denom <- mmr_compass %>%
   filter(is.na(Codeterm))
 
 
-mmr_compass_V2 <- mmr_compass_V2 %>%
+mmr_compass <- mmr_compass %>%
   filter(!is.na(Codeterm))
 
 ```
@@ -165,94 +122,94 @@ mmr_compass_V2 <- mmr_compass_V2 %>%
 ```{r}
 #remove MMR before 1y old
 
-mmr_compass_V2 <- select(mmr_compass_V2, -c(Age_at_event))
+mmr_compass <- select(mmr_compass, -c(Age_at_event))
 
-mmr_compass_V2 <- mmr_compass_V2 %>%
+mmr_compass <- mmr_compass %>%
   rename(Age_at_event = actual_age_at_event)
 
 
-mmr_compass_V2 <- mmr_compass_V2 %>%
+mmr_compass <- mmr_compass %>%
   filter(Age_at_event >= 1)
 ```
 
 ```{r}
 
-#create dataMMR_V2= monthly cohorts of children based on rundates
+#create dataMMR= monthly cohorts of children based on rundates
 
-dataMMR_V2 <- table(mmr_compass_V2$run_date)
+dataMMR <- table(mmr_compass$run_date)
 
-dataMMR_V2 <- as.data.frame(dataMMR_V2)
+dataMMR <- as.data.frame(dataMMR)
 
 #rename column name to run_date
-dataMMR_V2 <- dataMMR_V2 %>%
+dataMMR <- dataMMR %>%
   rename(run_date = Var1)
 
-dataMMR_V2$run_date <- as.character(dataMMR_V2$run_date)
+dataMMR$run_date <- as.character(dataMMR$run_date)
 
 #split run_date column to get into format for ITS tablem, just need the month and the year
-x <- colsplit(dataMMR_V2$run_date, "/", c("day", "month", "year"))
+x <- colsplit(dataMMR$run_date, "/", c("day", "month", "year"))
 x$month <- as.character(x$month)
 x$year <- as.character(x$year)
 
-dataMMR_V2 <- cbind(dataMMR_V2, x$month, x$year)
+dataMMR <- cbind(dataMMR, x$month, x$year)
 
-str(dataMMR_V2)
+str(dataMMR)
 
-dataMMR_V2 <- select(dataMMR_V2, -c(run_date))
-dataMMR_V2 <- dataMMR_V2 %>%
+dataMMR <- select(dataMMR, -c(run_date))
+dataMMR <- dataMMR %>%
   rename(month = `x$month`)
 
-dataMMR_V2 <- dataMMR_V2 %>%
+dataMMR <- dataMMR %>%
   rename(year = `x$year`)
 ```
 
 
 ```{r}
-dataMMR_V2denom <- table(mmr_compass_denom_V2$run_date)
+dataMMRdenom <- table(mmr_compass_denom$run_date)
 
-dataMMR_V2denom <- as.data.frame(dataMMR_V2denom)
+dataMMRdenom <- as.data.frame(dataMMRdenom)
 
 #rename column name to run_date
-dataMMR_V2denom <- dataMMR_V2denom %>%
+dataMMRdenom <- dataMMRdenom %>%
   rename(run_date = Var1)
 
-dataMMR_V2denom$run_date <- as.character(dataMMR_V2denom$run_date)
+dataMMRdenom$run_date <- as.character(dataMMRdenom$run_date)
 
 #split run_date column to get into format for ITS tablem, just need the month and the year
-x <- colsplit(dataMMR_V2denom$run_date, "/", c("day", "month", "year"))
+x <- colsplit(dataMMRdenom$run_date, "/", c("day", "month", "year"))
 x$month <- as.character(x$month)
 x$year <- as.character(x$year)
 
-dataMMR_V2denom <- cbind(dataMMR_V2denom, x$month, x$year)
+dataMMRdenom <- cbind(dataMMRdenom, x$month, x$year)
 
-str(dataMMR_V2denom)
+str(dataMMRdenom)
 
-dataMMR_V2denom <- select(dataMMR_V2denom, -c(run_date))
-dataMMR_V2denom <- dataMMR_V2denom %>%
+dataMMRdenom <- select(dataMMRdenom, -c(run_date))
+dataMMRdenom <- dataMMRdenom %>%
   rename(month_1 = `x$month`)
 
-dataMMR_V2denom <- dataMMR_V2denom %>%
+dataMMRdenom <- dataMMRdenom %>%
   rename(year_1 = `x$year`)
 
-dataMMR_V2denom$year <- as.numeric(dataMMR_V2denom$year)
-dataMMR_V2denom <- dataMMR_V2denom %>%
+dataMMRdenom$year <- as.numeric(dataMMRdenom$year)
+dataMMRdenom <- dataMMRdenom %>%
   arrange(year)
 ```
 
 ```{r}
 #Create factor of 1 for variable representation of implementation period
 
-dataMMR_V2$apl_tool <- if_else(dataMMR_V2$year >= 2022, 1, 0)
+dataMMR$apl_tool <- if_else(dataMMR$year >= 2022, 1, 0)
 
 #order year by ascending order
 
-dataMMR_V2$year <- as.numeric(dataMMR_V2$year)
-dataMMR_V2 <- dataMMR_V2 %>%
+dataMMR$year <- as.numeric(dataMMR$year)
+dataMMR <- dataMMR %>%
   arrange(year)
 
 #add in time column
 
-dataMMR_V2$time <- 1:nrow(dataMMR_V2)
+dataMMR$time <- 1:nrow(dataMMR)
 ```
 
 
@@ -265,45 +222,45 @@ table_0 <- data.frame(time_2 = rep(0,36))
 
 time_variables <- rbind(table_0, time_variables)
 
-dataMMR_V2 <- cbind(dataMMR_V2, time_variables)
+dataMMR <- cbind(dataMMR, time_variables)
 
 #rename column for MMR numerator
 
-dataMMR_V2 <- dataMMR_V2 %>%
+dataMMR <- dataMMR %>%
   rename(mmr_num = Freq)
 
 #make sure all columns are numeric
 
-dataMMR_V2$month <- as.numeric(dataMMR_V2$month)
-dataMMR_V2$mmr_num <- as.numeric(dataMMR_V2$mmr_num)
-dataMMR_V2$apl_tool <- as.numeric(dataMMR_V2$apl_tool)
-dataMMR_V2$time <- as.numeric(dataMMR_V2$time)
+dataMMR$month <- as.numeric(dataMMR$month)
+dataMMR$mmr_num <- as.numeric(dataMMR$mmr_num)
+dataMMR$apl_tool <- as.numeric(dataMMR$apl_tool)
+dataMMR$time <- as.numeric(dataMMR$time)
 ```
 
 
 ```{r}
 #combine MMR_num and denom together 
 
-dataMMR_V2denom <- select(dataMMR_V2denom, -c(year))
+dataMMRdenom <- select(dataMMRdenom, -c(year))
 
-dataMMR_V2 <- cbind(dataMMR_V2, dataMMR_V2denom)
+dataMMR <- cbind(dataMMR, dataMMRdenom)
 
-dataMMR_V2 <- select(dataMMR_V2, -c(month_1, year_1))
+dataMMR <- select(dataMMR, -c(month_1, year_1))
 
-dataMMR_V2$mmr_denom <- with(dataMMR_V2, mmr_num + Freq)
+dataMMR$mmr_denom <- with(dataMMR, mmr_num + Freq)
 
-dataMMR_V2 <- select(dataMMR_V2, -c(Freq))
+dataMMR <- select(dataMMR, -c(Freq))
 
-dataMMR_V2[36,4] <- 0
+dataMMR[36,4] <- 0
 
 #calculate rate of vaccination for each monthly cohort
 
-dataMMR_V2$rate <- with(dataMMR_V2, mmr_num/mmr_denom*100)
+dataMMR$rate <- with(dataMMR, mmr_num/mmr_denom*100)
 ```
 
 
 ```{r}
 #Export to run in joinpoint
 library(data.table)
-MMR_V2 <- data.frame(dataMMR_V2$mmr_num, dataMMR_V2$mmr_denom, dataMMR_V2$month, dataMMR_V2$year, dataMMR_V2$rate)
+MMR_V2 <- data.frame(dataMMR$mmr_num, dataMMR$mmr_denom, dataMMR$month, dataMMR$year, dataMMR$rate)
 fwrite(MMR_V2, "***.csv")
