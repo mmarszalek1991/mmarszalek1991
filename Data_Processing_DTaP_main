@@ -1,0 +1,257 @@
+```{r}
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+dtap_compass <- s3read_using(FUN = read.csv, object = "***.csv")
+```
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+```
+
+
+
+```{r}
+#remove City practices
+#Rename column in file to then remove City practices
+dtap_compass <- dtap_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+library("geojsonR")
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+dtap_compass <- dtap_compass[which(dtap_compass$Lsoa_2011_code %!in% City_lsoa), ]
+```
+
+
+```{r}
+#Remove invalid LSOA codes
+dtap_compass[dtap_compass == ""] <- NA
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+dtap_compass <- dtap_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+dtap_compass <- dtap_compass[!grepl('W', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('S', dtap_compass$Lsoa_2011_code),]
+
+dtap_compass <- dtap_compass[!grepl('U', dtap_compass$Lsoa_2011_code),]
+
+length(unique(dtap_compass$Person_id))
+sum(is.na(dtap_compass$Lsoa_2011_code))
+```
+
+
+```{r}
+#clean data
+#convert character columns to workable dates 
+
+dtap_compass$Clinical_effective_date <- as.Date(dtap_compass$Clinical_effective_date, format = "%d/%m/%Y")
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end, format = "%d/%m/%Y")
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations
+#Remove registrations with older start dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+dtap_compass$Date_registered_end <- as.Date(dtap_compass$Date_registered_end)
+dtap_compass$Date_registered_start <- as.Date(dtap_compass$Date_registered_start)
+
+dtap_compass$Date_registered_end <- if_else(is.na(dtap_compass$Date_registered_end), as.Date("2050-01-01"), dtap_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+dtap_compass <- dtap_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(dtap_compass$Person_id))
+summary(dtap_compass)
+
+#Now one registration per child: 
+```
+
+
+
+```{r}
+#separate out denominators, to create rate variable for ITS analysis table
+
+dtap_compass_denom <- dtap_compass %>%
+  filter(is.na(Codeterm))
+
+
+dtap_compass <- dtap_compass %>%
+  filter(!is.na(Codeterm))
+
+```
+
+
+
+```{r}
+#remove dtap before 6 weeks old
+
+dtap_compass <- select(dtap_compass, -c(Age_at_event))
+
+dtap_compass <- dtap_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+
+dtap_compass <- dtap_compass %>%
+  filter(Age_at_event >= 0.12)
+```
+
+
+```{r}
+
+#create datadtap= monthly cohorts of children based on rundates
+
+datadtap <- table(dtap_compass$run_date)
+
+datadtap <- as.data.frame(datadtap)
+
+#rename column name to run_date
+datadtap <- datadtap %>%
+  rename(run_date = Var1)
+
+datadtap$run_date <- as.character(datadtap$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(datadtap$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+datadtap <- cbind(datadtap, x$month, x$year)
+
+str(datadtap)
+
+datadtap <- select(datadtap, -c(run_date))
+datadtap <- datadtap %>%
+  rename(month = `x$month`)
+
+datadtap <- datadtap %>%
+  rename(year = `x$year`)
+```
+
+
+```{r}
+datadtapdenom <- table(dtap_compass_denom$run_date)
+
+datadtapdenom <- as.data.frame(datadtapdenom)
+
+#rename column name to run_date
+datadtapdenom <- datadtapdenom %>%
+  rename(run_date = Var1)
+
+datadtapdenom$run_date <- as.character(datadtapdenom$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(datadtapdenom$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+datadtapdenom <- cbind(datadtapdenom, x$month, x$year)
+
+str(datadtapdenom)
+
+datadtapdenom <- select(datadtapdenom, -c(run_date))
+datadtapdenom <- datadtapdenom %>%
+  rename(month_1 = `x$month`)
+
+datadtapdenom <- datadtapdenom %>%
+  rename(year_1 = `x$year`)
+
+datadtapdenom$year <- as.numeric(datadtapdenom$year)
+datadtapdenom <- datadtapdenom %>%
+  arrange(year)
+```
+
+```{r}
+#Create factor of 1 for variable representation of implementation period
+
+datadtap$apl_tool <- if_else(datadtap$year >= 2022, 1, 0)
+
+#order year by ascending order
+
+datadtap$year <- as.numeric(datadtap$year)
+datadtap <- datadtap %>%
+  arrange(year)
+
+#add in time column
+
+datadtap$time <- 1:nrow(datadtap)
+
+#add in time_2 column for slope during implementation, and then slope for after implementation
+
+time_variables <- data.frame(time_2 = seq(1,25))
+
+table_0 <- data.frame(time_2 = rep(0,36))
+
+time_variables <- rbind(table_0, time_variables)
+
+datadtap <- cbind(datadtap, time_variables)
+
+#rename column for dtap numerator
+
+datadtap <- datadtap %>%
+  rename(dtap_num = Freq)
+
+#make sure all columns are numeric
+
+datadtap$month <- as.numeric(datadtap$month)
+datadtap$dtap_num <- as.numeric(datadtap$dtap_num)
+datadtap$apl_tool <- as.numeric(datadtap$apl_tool)
+datadtap$time <- as.numeric(datadtap$time)
+```
+
+
+```{r}
+#combine dtap_num and denom together 
+
+datadtapdenom <- select(datadtapdenom, -c(year))
+
+datadtap <- cbind(datadtap, datadtapdenom)
+
+datadtap <- select(datadtap, -c(month_1, year_1))
+
+datadtap$dtap_denom <- with(datadtap, dtap_num + Freq)
+
+datadtap <- select(datadtap, -c(Freq))
+
+datadtap[36,4] <- 0
+
+#calculate rate of vaccination for each monthly cohort
+
+datadtap$rate <- with(datadtap, dtap_num/dtap_denom*100)
