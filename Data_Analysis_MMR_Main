@@ -53,7 +53,7 @@ axis(1,at=0:5*12,labels=F)
 axis(1,at=0:5*12+6,tick=F,labels=2019:2024)
 axis(2, ylim=c(65,95))
 # add a title
-title("1st MMR by 18 months, Download Only Group")
+title("MMR NE London, 2019-2024 ")
 ```
 
 
@@ -132,10 +132,10 @@ plot(dataMMR$rate,type="l",ylim=c(65,95),xlab="Year", ylab="Rate (%) of 1st MMR 
 rect(36,0,61,120,col=grey(0.9),border=F)
 points(dataMMR$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
-axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2024)
 axis(2, ylim=c(65,95))
 lines((1:600/10),pred1,col=2)
-title("1st MMR by 18 months, Download Only Group")
+title("MMR NE London, 2019-2024")
 ```
 
 
@@ -163,11 +163,11 @@ plot(dataMMR$rate,type="l",ylim=c(65,95),xlab="Year", ylab="Rate (%) of 1st MMR 
 rect(36,0,61,120,col=grey(0.9),border=F)
 points(dataMMR$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
-axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2024)
 axis(2, ylim=c(65,95))
 lines((1:600/10),pred1,col=2)
 lines(dataMMRnew$time,pred1b,col=8,lty=2)
-title("North East London, 2019-2024")
+title("MMR NE London, 2019-2024")
 legend("bottomleft",c("Observed Trend","Counterfactual"),lty=1:2,
   col=c(2,8),inset=0.05,bty="n",cex=0.7)
 ```
@@ -265,10 +265,10 @@ plot(dataMMR$rate,type="l",ylim=c(65,95),xlab="Year",ylab="Rate (%) of 1st MMR v
 rect(36,0,61,120,col=grey(0.9),border=F)
 points(dataMMR$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
-axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2024)
 axis(2, ylim=c(65,95))
 lines(1:600/10,pred3,col=2)
-title("North East London, 2019-2023")
+title("MMR NE London, 2019-2024")
 ```
 
 
@@ -286,11 +286,11 @@ plot(dataMMR$rate,type="l",ylim=c(65,95),xlab="Year",ylab="Rate (%) of 1st MMR v
 rect(36,0,61,120,col=grey(0.9),border=F)
 points(dataMMR$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
-axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2024)
 axis(2, ylim=c(65,95))
 lines(1:600/10,pred3,col=2)
 lines(1:600/10,pred3b,col=2,lty=2)
-title("North East London, 2019-2023")
+title("MMR NE London, 2019-2024")
 ```
 
 ```{r}
