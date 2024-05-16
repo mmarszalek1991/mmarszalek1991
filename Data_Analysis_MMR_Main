@@ -1,0 +1,302 @@
+```{r}
+
+################################################################################
+# This file uses code based on the following paper:
+#   Interrupted time series regression for the evaluation of public health 
+#     interventions: a tutorial
+#   IJE 2016
+#   J. Lopez Bernal, S. Cummins, A. Gasparrini
+################################################################################
+#Modifications for MMR APL tool analysis
+
+# Install packages required for the analysis 
+install.packages("lmtest") ; install.packages("Epi")
+install.packages("tsModel"); install.packages("vcd")
+```
+
+
+```{r}
+# load the packages needed
+library(foreign) ; library(tsModel) ; library("lmtest") ; library("Epi")
+library("splines") ; library("vcd") ; library(gtsummary); library("questionr")
+
+
+# This dataset includes the following variables:
+# year
+# month
+# time = elapsed time since the start of the study
+# mmr_num = count of children that received 1st MMR between 12-18 months (the outcome) 
+# apl_tool = APL tool (the intervention) coded 0 before intervention, 1 after
+# mmr_denom = eligible children
+```
+
+
+```{r}
+#View data file created from Data_Processing_MMR_Main
+
+View(dataMMR)
+
+
+```
+
+```{r}
+# Create baseline plot for pre-implementation period
+
+plot(dataMMR$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months ",
+  bty="l",xaxt ="n", axes = FALSE)
+# shade the post intervention period grey
+rect(36,0,61,140,col=grey(0.9),border=F)
+# plot the observed rate for pre-intervention period
+points(dataMMR$rate[dataMMR$apl_tool==0],cex=0.7, type = "l")
+#specify the x-axis (i.e. time units)
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:5*12+6,tick=F,labels=2019:2024)
+axis(2, ylim=c(50,100))
+# add a title
+title("1st MMR by 18 months, Download Only Group")
+```
+
+
+```{r}
+# It is also useful to produce summary statistics
+summary(dataMMR)
+
+#tabulate MMR before and after APL tool
+
+summary(dataMMR$mmr_num[dataMMR$apl_tool==0])
+summary(dataMMR$mmr_num[dataMMR$apl_tool==1])
+```
+
+#Calculate standard errors and standard deviation
+sample.n <- length(dataMMR$rate)
+sample.sd <- sd(dataMMR$rate[dataMMR$apl_tool==0])
+sample.se <- sample.sd/sqrt(sample.n)
+  
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+sample.n <- length(dataMMR$rate)
+sample.sd <- sd(dataMMR$rate[dataMMR$apl_tool==1])
+sample.se <- sample.sd/sqrt(sample.n)
+  
+alpha = 0.05
+degrees.freedom = sample.n - 1
+t.score = qt(p=alpha/2, df=degrees.freedom,lower.tail=F)
+print(t.score)
+
+margin.error <- t.score * sample.se
+
+```{r}
+##
+#Step 4: Poisson regression model
+# We have chosen a step change model and Poisson Regression to model count data
+# In order to do this we model the count data directly (rather than the rate
+#   which doesn't follow a Poisson distribution), using the population (log
+#   transformed) as an offset variable in order to transform back to rates
+
+#Poisson with the standardised population as an offset
+modelV21 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2, family=poisson, dataMMR)
+summary(modelV21)
+summary(modelV21)$dispersion
+round(ci.lin(modelV21,Exp=T),3)
+
+```
+
+
+```{r}
+# create a new dataframe with 0.1 time units to improve the graph- need to calculate new boundaries for new data set
+
+
+dataMMRnew <- data.frame(mmr_denom=mean(dataMMR$mmr_denom),apl_tool=rep(c(0,1),c(358,242)),
+  time= 1:600/10,month=rep(1:120/10, 5))
+View(dataMMRnew)
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMRnew <- cbind(dataMMRnew, time_variables_its)
+
+# We generate predicted values based on the model in order to create a plot
+predV21 <- predict(modelV21,type="response",dataMMRnew)/mean(dataMMR$mmr_denom)*100
+
+#This can then be plotted along with a scatter graph (see above)
+plot(dataMMR$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months", bty = "l", xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines((1:600/10),predV21,col=2)
+title("1st MMR by 18 months, Download Only Group")
+```
+
+
+```{r}
+# to plot the counterfactual scenario we create a data frame as if the intervention were never implemented
+
+
+dataMMRnew <- data.frame(mmr_denom=mean(dataMMR$mmr_denom),apl_tool=0,time=1:600/10,
+  month=rep(1:120/10,5))
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMRnew <- cbind(dataMMRnew, time_variables_its)
+
+# generate predictions under the counterfactual scenario and add it to the plot
+predV21b <- predict(modelV21,dataMMRnew,type="response")/mean(dataMMR$mmr_denom)*100
+plot(dataMMR$rate,type="l",ylim=c(50,100),xlab="Year", ylab="Rate (%) of 1st MMR vaccination by 18 months", bty = "l", xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines((1:600/10),predV21,col=2)
+lines(dataMMRnew$time,predV21b,col=8,lty=2)
+title("North East London, 2019-2024")
+legend("bottomleft",c("Observed Trend","Counterfactual"),lty=1:2,
+  col=c(2,8),inset=0.05,bty="n",cex=0.7)
+```
+
+
+```{r}
+# return the data frame to the scenario including the intervention
+dataMMRnew <- data.frame(mmr_denom=mean(dataMMR$mmr_denom),apl_tool=rep(c(0,1),c(358,242)),
+  time= 1:600/10,month=rep(1:120/10,5))
+
+
+time_variables_its <- data.frame(time_2 = 1:600/10)
+
+time_variables_its <- time_variables_its %>%
+  filter(time_2 <= 25.0)
+
+table_0_its <- data.frame(time_2 = rep(0,350))
+
+time_variables_its <- rbind(table_0_its, time_variables_its)
+
+dataMMRnew <- cbind(dataMMRnew, time_variables_its)
+
+```
+
+
+```{r}
+
+# Factoring in Overdispersion: Quasi-Poisson model 
+
+modelV22 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2, family=quasipoisson,
+  dataMMR)
+summary(modelV22)
+summary(modelV22)$dispersion
+round(ci.lin(modelV22,Exp=T),3)
+round(ci.lin(modelV22),3)
+tbl_regression(modelV22, exponentiate = TRUE)
+```
+
+
+```{r}
+#b) Model checking and autocorrelation
+
+# Check the residuals by plotting against time
+res2 <- residuals(modelV22,type="deviance")
+plot(dataMMR$time,res2,ylim=c(-5,10),pch=19,cex=0.7,col=grey(0.6),
+  main="Residuals over time",ylab="Deviance residuals",xlab="Date")
+abline(h=0,lty=2,lwd=2)
+```
+
+
+```{r}
+# Further check for autocorrelation by examining the autocorrelation and
+#   partial autocorrelation functions
+acf(res2)
+pacf(res2)
+```
+
+
+```{r}
+#c) adjusting for seasonality: harmonic terms specifying the number of sin and cosine pairs to include and the length of the period (12 months)
+modelV23 <- glm(mmr_num ~ offset(log(mmr_denom)) + apl_tool + time + time_2 +
+  harmonic(month,2,12), family=quasipoisson, dataMMR)
+summary(modelV23)
+summary(modelV23)$dispersion
+
+
+# EFFECTS
+ci.lin(modelV23,Exp=T)["apl_tool",5:7]
+
+# TREND
+exp(coef(modelV23)["time"]*12)
+
+tbl_regression(modelV23, exponentiate = T)
+```
+
+
+```{r}
+# We again check the model and autocorrelation functions
+res3 <- residuals(modelV23,type="deviance")
+
+
+plot(res3,ylim=c(-5,10),pch=19,cex=0.7,col=grey(0.6),main="Residuals over time",
+  ylab="Deviance residuals",xlab="Date")
+abline(h=0,lty=2,lwd=2)
+acf(res3)
+pacf(res3)
+```
+
+
+```{r}
+# predict and plot of the seasonally adjusted model
+predV23 <- predict(modelV23,type="response",dataMMRnew)/mean(dataMMR$mmr_denom)*100
+plot(dataMMR$rate,type="l",ylim=c(50,100),xlab="Year",ylab="Rate (%) of 1st MMR vaccination by 18 months",
+  bty="l",xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines(1:600/10,predV23,col=2)
+title("North East London, 2019-2023")
+```
+
+
+```{r}
+# 'deseasonalised' trend
+# we predicted all observations for the same month, in
+#   this case we used June
+predV23b <- predict(modelV23,type="response",transform(dataMMRnew,month=6))/
+  mean(dataMMR$mmr_denom)*100
+
+#this is added as a dashed line
+
+plot(dataMMR$rate,type="l",ylim=c(50,100),xlab="Year",ylab="Rate (%) of 1st MMR vaccination by 18 months",
+  bty="l",xaxt ="n", axes = FALSE)
+rect(36,0,61,120,col=grey(0.9),border=F)
+points(dataMMR$rate,cex=0.7, type = "l")
+axis(1,at=0:5*12,labels=F)
+axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
+axis(2, ylim=c(50,100))
+lines(1:600/10,predV23,col=2)
+lines(1:600/10,predV23b,col=2,lty=2)
+title("North East London, 2019-2023")
+```
+
+```{r}
+# test if seasonal model or overdispersed model has a better fit
+# the selected test here is an F-test, which accounts for the overdispersion,
+
+anova(modelV22,modelV23,test="F")
+
+```
