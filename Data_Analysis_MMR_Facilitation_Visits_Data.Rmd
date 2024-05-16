@@ -415,17 +415,18 @@ pacf(res2)
 #Run Data_Processing and Data_Analysis files for both Download Only and Facilitator Groups before creating graph
 # Final graph- with overall rate for MMR, comparing trends for Download Only Group comparing Facilitator Visits Group
 
-plot(dataMMR_V2$rate,type="l",ylim=c(50,100), xlab="Year", ylab= "Rate (%) of 1st MMR vaccination by 18 months", bty="l",xaxt="n", axes = FALSE)
+plot(dataMMR$rate,type="l",ylim=c(65,95), xlab="Year", ylab= "Rate (%) of 1st MMR vaccination by 18 months", bty="l",xaxt="n", axes = FALSE)
 rect(36,0,61,120,col=grey(0.9),border=F)
-points(dataMMR_V2$rate,cex=0.7, type = "l")
+points(dataMMR$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
 axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
 axis(2, ylim=c(50,100))
-lines(1:600/10,predfac1,col="red2")
-lines(1:600/10,predV21,col="aquamarine")
+lines(1:600/10,predfac1,col="deeppink2")
+lines(1:600/10,predV21,col="dodgerblue")
+lines(1:600/10,predno1,col="green3")
 title("North East London, 2019-2023")
-legend("bottomleft",c("Rate of 1st MMR by 18m: Intervention Practices", "Facilitator Visit + Download", "Download Only"),lty=1,
-  col=c("black","red2","aquamarine"),inset=0.05,bty="n",cex=0.7)
+legend("topleft",c("Rate of 1st MMR by 18m", "Facilitator Visit + Download", "Download Only", "No Download"),lty=1,
+  col=c("black","deeppink2","dodgerblue","green3"),inset=0.05,bty="n",cex=0.7)
 ```
 
 
