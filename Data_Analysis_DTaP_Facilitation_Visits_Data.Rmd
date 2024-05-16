@@ -423,17 +423,18 @@ pacf(res3)
 # Final graph- with overall rate for DTaP, comparing trends for Download Only Group comparing Facilitator Visits Group
  
 
-plot(datadtap_V2$rate,type="l",ylim=c(70,100), xlab="Year", ylab= "Rate (%) of 1st DTaP vaccination by 6 months", bty="l",xaxt="n", axes = FALSE)
+plot(datadtap$rate,type="l",ylim=c(65,95), xlab="Year", ylab= "Rate (%) of 1st DTaP/IPV vaccination by 6 months", bty="l",xaxt="n", axes = FALSE)
 rect(36,0,61,120,col=grey(0.9),border=F)
-points(datadtap_V2$rate,cex=0.7, type = "l")
+points(datadtap$rate,cex=0.7, type = "l")
 axis(1,at=0:5*12,labels=F)
 axis(1,at=0:4*12+6,tick=F,labels=2019:2023)
 axis(2, ylim=c(50,100))
-lines(1:600/10,predfac1,col="red2")
-lines(1:600/10,predV21,col="chartreuse1")
-title("North East London, 2019-2024")
-legend("bottomleft",c("Rate of 1st DTaP by 6m: Intervention Practices", "Facilitator Visit + Download", "Download Only"),lty=1,
-  col=c("black","red2","chartreuse1"),inset=0.05,bty="n",cex=0.7)
+lines(1:600/10,predfac1,col="deeppink2")
+lines(1:600/10,predV21,col="dodgerblue")
+lines(1:600/10,predno1,col="green3")
+title("DTaP NE London, 2019-2024")
+legend("bottomright",c("Rate of 1st DTaP/IPV by 6m", "Facilitator Visit + Download", "Download Only", "No Download"),lty=1,
+  col=c("black","deeppink2","dodgerblue","green3"),inset=0.05,bty="n",cex=0.7)
 ```
 
 
