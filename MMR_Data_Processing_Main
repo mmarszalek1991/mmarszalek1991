@@ -1,0 +1,264 @@
+```{r}
+#Import file into R
+
+library(aws.s3)
+Sys.setenv(
+"AWS_ACCESS_KEY_ID" = "***",
+"AWS_SECRET_ACCESS_KEY" = "***",
+"AWS_DEFAULT_REGION" = "***")
+check_region = F
+bucketlist()
+data.table::rbindlist(get_bucket(bucket = "***"))
+
+mmr_compass <- s3read_using(FUN = read.csv, object = "***")
+
+
+```{r}
+#Load relevant packages
+library(dplyr)
+library(reshape2)
+library(stringr)
+library("geojsonR")
+```
+
+
+```{r}
+
+#remove City practices
+#Rename column in file to then remove City practices
+mmr_compass <- mmr_compass %>%
+  rename(Lsoa_2011_code = Lsoa_2011_code_datregstart)
+
+url_path_2 <- "https://raw.githubusercontent.com/drkane/geo-lookups/master/boundaries/lsoa11/E09000001.geojson"
+City <- geojsonsf::geojson_sf(url_path_2)
+
+City <- City %>%
+  rename(Lsoa_2011_code = LSOA11CD)
+
+'%!in%' <- Negate('%in%')
+
+
+City_lsoa <- City$Lsoa_2011_code
+
+mmr_compass <- mmr_compass[which(mmr_compass$Lsoa_2011_code %!in% City_lsoa), ]
+
+mmr_compass[mmr_compass == ""] <- NA
+
+#Remove invalid LSOA codes
+
+mmr_compass <- mmr_compass %>%
+  filter(!is.na(Lsoa_2011_code))
+
+mmr_compass <- mmr_compass %>%
+  filter(Lsoa_2011_code != "NULL")
+
+mmr_compass <- mmr_compass[!grepl('W', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('S', mmr_compass$Lsoa_2011_code),]
+
+mmr_compass <- mmr_compass[!grepl('U', mmr_compass$Lsoa_2011_code),]
+
+```
+
+
+```{r}
+#clean data
+#convert character columns to workable dates 
+
+mmr_compass$Clinical_effective_date <- as.Date(mmr_compass$Clinical_effective_date, format = "%d/%m/%Y")
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end, format = "%d/%m/%Y")
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start, format = "%d/%m/%Y")
+
+```
+
+
+```{r}
+#Remove excess registrations.
+#Remove registrations with older start dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id, Date_registered_start) %>%
+arrange(desc(Date_registered_start)) %>%
+slice_head(n = 1)
+
+#Remove registrations with less recent end dates
+
+mmr_compass$Date_registered_end <- as.Date(mmr_compass$Date_registered_end)
+mmr_compass$Date_registered_start <- as.Date(mmr_compass$Date_registered_start)
+
+mmr_compass$Date_registered_end <- if_else(is.na(mmr_compass$Date_registered_end), as.Date("2050-01-01"), mmr_compass$Date_registered_end)
+
+#Remove registrations with older end dates
+
+mmr_compass <- mmr_compass %>%
+group_by(Person_id) %>%
+arrange(desc(Date_registered_end)) %>%
+slice_head(n = 1)
+
+length(unique(mmr_compass$Person_id))
+summary(mmr_compass)
+
+#Now one registration per child: 
+```
+
+
+```{r}
+#separate out denominators, to create rate variable for ITS analysis table
+
+mmr_compass_denom <- mmr_compass %>%
+  filter(is.na(Codeterm))
+
+
+mmr_compass <- mmr_compass %>%
+  filter(!is.na(Codeterm))
+
+```
+
+
+
+```{r}
+#remove MMR before 1y old
+
+mmr_compass <- select(mmr_compass, -c(Age_at_event))
+
+mmr_compass <- mmr_compass %>%
+  rename(Age_at_event = actual_age_at_event)
+
+
+mmr_compass <- mmr_compass %>%
+  filter(Age_at_event >= 1)
+```
+
+```{r}
+
+#create dataMMR= monthly cohorts of children based on rundates
+
+dataMMR <- table(mmr_compass$run_date)
+
+dataMMR <- as.data.frame(dataMMR)
+
+#rename column name to run_date
+dataMMR <- dataMMR %>%
+  rename(run_date = Var1)
+
+dataMMR$run_date <- as.character(dataMMR$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(dataMMR$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+dataMMR <- cbind(dataMMR, x$month, x$year)
+
+str(dataMMR)
+
+dataMMR <- select(dataMMR, -c(run_date))
+dataMMR <- dataMMR %>%
+  rename(month = `x$month`)
+
+dataMMR <- dataMMR %>%
+  rename(year = `x$year`)
+```
+
+
+```{r}
+dataMMRdenom <- table(mmr_compass_denom$run_date)
+
+dataMMRdenom <- as.data.frame(dataMMRdenom)
+
+#rename column name to run_date
+dataMMRdenom <- dataMMRdenom %>%
+  rename(run_date = Var1)
+
+dataMMRdenom$run_date <- as.character(dataMMRdenom$run_date)
+
+#split run_date column to get into format for ITS tablem, just need the month and the year
+x <- colsplit(dataMMRdenom$run_date, "/", c("day", "month", "year"))
+x$month <- as.character(x$month)
+x$year <- as.character(x$year)
+
+dataMMRdenom <- cbind(dataMMRdenom, x$month, x$year)
+
+str(dataMMRdenom)
+
+dataMMRdenom <- select(dataMMRdenom, -c(run_date))
+dataMMRdenom <- dataMMRdenom %>%
+  rename(month_1 = `x$month`)
+
+dataMMRdenom <- dataMMRdenom %>%
+  rename(year_1 = `x$year`)
+
+dataMMRdenom$year <- as.numeric(dataMMRdenom$year)
+dataMMRdenom <- dataMMRdenom %>%
+  arrange(year)
+```
+
+```{r}
+#Create factor of 1 for variable representation of implementation period
+
+dataMMR$apl_tool <- if_else(dataMMR$year >= 2022, 1, 0)
+
+#order year by ascending order
+
+dataMMR$year <- as.numeric(dataMMR$year)
+dataMMR <- dataMMR %>%
+  arrange(year)
+
+#add in time column
+
+dataMMR$time <- 1:nrow(dataMMR)
+```
+
+
+```{r}
+#add in time_2 column for slope during implementation, and then slope for after implementation
+
+time_variables <- data.frame(time_2 = seq(1,25))
+
+table_0 <- data.frame(time_2 = rep(0,36))
+
+time_variables <- rbind(table_0, time_variables)
+
+dataMMR <- cbind(dataMMR, time_variables)
+
+#rename column for MMR numerator
+
+dataMMR <- dataMMR %>%
+  rename(mmr_num = Freq)
+
+#make sure all columns are numeric
+
+dataMMR$month <- as.numeric(dataMMR$month)
+dataMMR$mmr_num <- as.numeric(dataMMR$mmr_num)
+dataMMR$apl_tool <- as.numeric(dataMMR$apl_tool)
+dataMMR$time <- as.numeric(dataMMR$time)
+```
+
+
+```{r}
+#combine MMR_num and denom together 
+
+dataMMRdenom <- select(dataMMRdenom, -c(year))
+
+dataMMR <- cbind(dataMMR, dataMMRdenom)
+
+dataMMR <- select(dataMMR, -c(month_1, year_1))
+
+dataMMR$mmr_denom <- with(dataMMR, mmr_num + Freq)
+
+dataMMR <- select(dataMMR, -c(Freq))
+
+dataMMR[36,4] <- 0
+
+#calculate rate of vaccination for each monthly cohort
+
+dataMMR$rate <- with(dataMMR, mmr_num/mmr_denom*100)
+```
+
+
+```{r}
+#Export to run in joinpoint
+library(data.table)
+MMR <- data.frame(dataMMR$mmr_num, dataMMR$mmr_denom, dataMMR$month, dataMMR$year, dataMMR$rate)
+fwrite(MMR, "***.csv")
+```
