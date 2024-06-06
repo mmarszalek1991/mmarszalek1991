@@ -33,7 +33,13 @@ library("geojsonR")
 
 
 ```{r}
+#Remove S1 practices as data not validated
 
+'%!in%' <- Negate('%in%')
+
+S1_Practices <- c("Y00155", "F86657", "F86025", "F86004", "F86638", "F86074", "F86018", 	
+"F86026", "F86013", "F82680", "F86082")
+dtap_compass <- dtap_compass[which(dtap_compass$Ods_code %!in% S1_Practices), ]
 
 #remove City practices
 #Rename column in file to then remove City practices
