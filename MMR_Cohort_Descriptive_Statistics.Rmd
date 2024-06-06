@@ -37,7 +37,16 @@ lsoa_null <- read.csv("***.csv")
 
 
 ```{r}
-#process data to remoce City practices
+
+#remove SystemOne practices
+
+'%!in%' <- Negate('%in%')
+
+S1_Practices <- c("Y00155", "F86657", "F86025", "F86004", "F86638", "F86074", "F86018", 	
+"F86026", "F86013", "F82680", "F86082")
+mmr_compass <- mmr_compass[which(mmr_compass$Ods_code %!in% S1_Practices), ]
+
+#process data to remove City practices
 #remove City practices
 
 mmr_compass <- mmr_compass %>%
